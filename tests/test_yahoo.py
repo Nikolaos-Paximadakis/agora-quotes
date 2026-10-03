@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -181,3 +182,50 @@ def test_intraday_range_too_old_is_rejected_without_calling_yahoo(
     with pytest.raises(ProviderError, match="last 30 days"):
         YahooProvider().get_history(AAPL, old, datetime.now(UTC), "1m")
     assert tickers == {}
+
+
+# yfinance log noise ------------------------------------------------------
+
+
+class NoisyTicker:
+    """Logs like yfinance does for an unknown ticker, then returns nothing."""
+
+    @property
+    def info(self) -> dict[str, Any]:
+        logging.getLogger("yfinance").error('HTTP Error 404: {"quoteSummary": "Quote not found"}')
+        return {"trailingPegRatio": None}
+
+    def history(self, **kwargs: Any) -> pd.DataFrame:
+        logging.getLogger("yfinance").error("$NOPE: possibly delisted; no price data found")
+        return pd.DataFrame()
+
+
+def test_yfinance_errors_are_silenced_during_adapter_calls(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: NoisyTicker())
+    with pytest.raises(SymbolNotFound):
+        YahooProvider().get_quote(NOPE)
+    with pytest.raises(SymbolNotFound):
+        YahooProvider().get_history(NOPE, START, END, "1d")
+    assert caplog.records == []
+
+
+def test_yfinance_logs_outside_adapter_calls_are_untouched(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: NoisyTicker())
+    with pytest.raises(SymbolNotFound):
+        YahooProvider().get_quote(NOPE)
+    _ = NoisyTicker().info
+    assert [r.levelno for r in caplog.records] == [logging.ERROR]
+
+
+def test_yfinance_debug_logging_disables_silencing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="yfinance")
+    monkeypatch.setattr(yahoo.yf, "Ticker", lambda s: NoisyTicker())
+    with pytest.raises(SymbolNotFound):
+        YahooProvider().get_quote(NOPE)
+    assert "Quote not found" in caplog.text

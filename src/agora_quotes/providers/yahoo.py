@@ -8,8 +8,11 @@ redistribution terms.
 
 from __future__ import annotations
 
+import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -28,6 +31,36 @@ INTRADAY_MAX_AGE: dict[str, timedelta] = {
     "15m": timedelta(days=60),
     "1h": timedelta(days=730),
 }
+
+
+# yfinance logs failures (e.g. the 404 for an unknown ticker) on its "yfinance"
+# logger even though the adapter already turns them into exceptions. The filter
+# drops those records only while an adapter call is running, so apps using
+# yfinance directly, or turning on its debug logging, still see everything.
+_quiet: ContextVar[bool] = ContextVar("agora_quotes_quiet_yfinance", default=False)
+
+
+class _QuietFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not _quiet.get() or record.levelno >= logging.CRITICAL:
+            return True
+        level = logging.getLogger("yfinance").level
+        return logging.NOTSET < level <= logging.DEBUG
+
+
+_QUIET_FILTER = _QuietFilter()
+
+
+@contextmanager
+def _quiet_yfinance() -> Iterator[None]:
+    logger = logging.getLogger("yfinance")
+    if _QUIET_FILTER not in logger.filters:
+        logger.addFilter(_QUIET_FILTER)
+    token = _quiet.set(True)
+    try:
+        yield
+    finally:
+        _quiet.reset(token)
 
 
 def yahoo_symbol(symbol: Symbol) -> str:
@@ -74,9 +107,10 @@ class YahooProvider:
                 self.name,
             )
         try:
-            df = yf.Ticker(yahoo_symbol(symbol)).history(
-                start=start, end=end, interval=interval, auto_adjust=False, actions=False
-            )
+            with _quiet_yfinance():
+                df = yf.Ticker(yahoo_symbol(symbol)).history(
+                    start=start, end=end, interval=interval, auto_adjust=False, actions=False
+                )
         except YFRateLimitError as e:
             raise RateLimited(self.name) from e
         except Exception as e:  # yfinance raises many unrelated types
@@ -110,7 +144,8 @@ class YahooProvider:
 
     def _info(self, symbol: Symbol) -> dict[str, Any]:
         try:
-            info = yf.Ticker(yahoo_symbol(symbol)).info
+            with _quiet_yfinance():
+                info = yf.Ticker(yahoo_symbol(symbol)).info
         except YFRateLimitError as e:
             raise RateLimited(self.name) from e
         except Exception as e:  # yfinance raises many unrelated types
