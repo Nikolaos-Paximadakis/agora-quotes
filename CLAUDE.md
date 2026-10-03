@@ -55,8 +55,6 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
 - Requires Python >= 3.10, so ruff targets py310 and mypy uses python_version 3.10. The local interpreter is 3.14.
 - Make small, well-described git commits per milestone.
 
-## Not built yet
+## Remaining work
 
-- The Twelve Data and EODHD adapters.
-- Streaming implementations: only the Protocol exists.
-- A cache shared across processes.
+GitHub issues are the task tracker (`gh issue list`). Don't keep a task list in this file.
