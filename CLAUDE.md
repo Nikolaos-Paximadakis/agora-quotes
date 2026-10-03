@@ -46,7 +46,11 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
     - It reports a failed first connection, or more than `MAX_RECONNECTS` failed reconnects, as `ProviderError` instead of retrying forever.
     - On close it ends the SDK's dispatch thread by raising `SystemExit` from `on_event`. That is the only way out of the SDK's loop; the tests filter pytest's warning about it.
   - Events cross from the SDK threads via `loop.call_soon_threadsafe` into an `asyncio.Queue`. A separate task sends a heartbeat every `HEARTBEAT_S`, even while the consumer is busy, and the generator closes the socket in `finally`. `service.stream` calls `aclose()` on the provider generator itself, because `async for` does not. A rejected subscription raises; it is not skipped.
-- **`providers/eodhd.py`** is a `NotImplementedError` stub.
+- **`providers/eodhd.py`** uses the stdlib (`urllib`), so it needs no extra. Requires `EODHD_API_KEY`.
+  - `eodhd_symbol()` gives `TICKER.EXCHANGE` via `EXCHANGE_CODES` (`ATHEX` → `AT`); plain tickers mean `.US`.
+  - Quotes come from `/real-time`, batched `BATCH_SIZE` per request (`real-time/FIRST?s=REST`). They are always `delayed=True`, and currency comes from the static `CURRENCIES` map because the API doesn't send one.
+  - Unknown tickers come back as rows of `"NA"` or as a 404; both mean `SymbolNotFound`. A 403 (ticker outside the plan) fails the whole batch, so the adapter then retries per symbol and puts the 403 inline. 429 and 402 (daily quota) → `RateLimited`.
+  - History: daily and longer bars come from `/eod` (`close` is unadjusted; `to` is an inclusive date). Shorter intervals come from `/intraday` (unix bounds, both inclusive), and ranges longer than `INTRADAY_MAX_SPAN` are rejected up front. The public `demo` key covers AAPL.US/TSLA.US, so the live test uses it when no key is set.
 
 ## Invariants (tests depend on these)
 

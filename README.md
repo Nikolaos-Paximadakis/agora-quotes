@@ -1,6 +1,6 @@
 # agora-quotes
 
-One consistent interface for stock market quotes: Greek stocks (Athens Exchange, ATHEX) first, plus US and other markets. It is a thin wrapper over existing data sources (yfinance, Twelve Data). Your apps depend on `agora_quotes` only, never on a vendor SDK, so a data source can be swapped by writing one adapter.
+One consistent interface for stock market quotes: Greek stocks (Athens Exchange, ATHEX) first, plus US and other markets. It is a thin wrapper over existing data sources (yfinance, Twelve Data, EODHD). Your apps depend on `agora_quotes` only, never on a vendor SDK, so a data source can be swapped by writing one adapter.
 
 ## Install
 
@@ -54,7 +54,7 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 
 ### Quotes
 
-`get_quote` raises on failure. `get_quotes` returns a quote *or an error* for each symbol, so one bad ticker doesn't break a batch. Failures that affect the whole source still raise: `RateLimited`, `ProviderError`. If a provider hits its rate limit partway through a batch (Twelve Data fetches one symbol per request), the quotes already fetched are kept and the remaining symbols get `RateLimited` inline.
+`get_quote` raises on failure. `get_quotes` returns a quote *or an error* for each symbol, so one bad ticker doesn't break a batch. Failures that affect the whole source still raise: `RateLimited`, `ProviderError`. If a provider hits its rate limit partway through a batch (Twelve Data fetches one symbol per request, EODHD 15), the quotes already fetched are kept and the remaining symbols get `RateLimited` inline.
 
 ### History
 
@@ -65,6 +65,7 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 - **Results.** A range with no trading returns `[]`; an unknown symbol raises `SymbolNotFound`.
 - **Intraday limits.** Yahoo serves intraday data only for recent periods: `1m` for 30 days, `5m`/`15m` for 60 days, `1h` for 730 days. Older requests raise `ProviderError`.
 - **Twelve Data** returns at most 5000 bars per request. A range that reaches that cap raises `ProviderError` rather than silently returning a truncated list; ask for a shorter range.
+- **EODHD** serves at most 120 days of `1m` bars and 600 days of `5m`/`15m` bars per request (7200 days of `1h`). Longer ranges raise `ProviderError` before any request is made. Weekly and monthly bars start on the first trading day of the week or month.
 
 ### Streaming
 
@@ -104,7 +105,7 @@ These are environment variables only; see `.env.example`.
 | `AGORA_QUOTES_FALLBACK` | Optional second provider, tried when the first fails |
 | `AGORA_QUOTES_CACHE_TTL` | Quote cache lifetime in seconds (default 60, `0` disables) |
 | `TWELVEDATA_API_KEY` | Twelve Data API key; required when `twelvedata` is configured (missing → `ConfigurationError`) |
-| `EODHD_API_KEY` | EODHD API key (provider not implemented yet) |
+| `EODHD_API_KEY` | EODHD API key; required when `eodhd` is configured (missing → `ConfigurationError`) |
 
 Or configure it in code:
 
@@ -125,7 +126,7 @@ Arguments left as `None` are read from the environment. Providers can be given a
 
 Free data, especially for ATHEX, is usually **delayed by about 15 minutes**. Every `Quote` has:
 
-- `delayed`. This is `True` unless the source explicitly reports the data as real-time. With Yahoo, ATHEX quotes report a 15-minute delay; US quotes report 0 and are marked `delayed=False`. Twelve Data never says whether a quote is real-time, so its quotes are always `delayed=True`.
+- `delayed`. This is `True` unless the source explicitly reports the data as real-time. With Yahoo, ATHEX quotes report a 15-minute delay; US quotes report 0 and are marked `delayed=False`. Twelve Data never says whether a quote is real-time, so its quotes are always `delayed=True`. Neither does EODHD, whose live prices are documented as 15–20 minutes delayed, so its quotes are always `delayed=True` too. EODHD doesn't report a currency; it is filled in for ATHEX, US and XETRA and left `None` for LSE.
 - `timestamp`, the market time the price refers to. Outside trading hours this is the last close, so check it before treating a price as current.
 - `source` and `retrieved_at`.
 

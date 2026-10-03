@@ -6,7 +6,6 @@ from agora_quotes.providers.base import Provider, StreamingProvider
 from agora_quotes.providers.eodhd import EODHDProvider
 from agora_quotes.providers.twelvedata import TwelveDataProvider
 from agora_quotes.providers.yahoo import YahooProvider
-from agora_quotes.symbols import Symbol
 
 
 def names() -> list[str]:
@@ -19,6 +18,7 @@ def test_defaults() -> None:
 
 
 def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EODHD_API_KEY", "test-key")
     monkeypatch.setenv("AGORA_QUOTES_PROVIDER", "eodhd")
     monkeypatch.setenv("AGORA_QUOTES_FALLBACK", "yahoo")
     monkeypatch.setenv("AGORA_QUOTES_CACHE_TTL", "5")
@@ -53,14 +53,10 @@ def test_bad_cache_ttl_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_all_adapters_satisfy_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TWELVEDATA_API_KEY", "test-key")
+    monkeypatch.setenv("EODHD_API_KEY", "test-key")
     for cls in (YahooProvider, TwelveDataProvider, EODHDProvider):
         assert isinstance(cls(), Provider)
     assert isinstance(TwelveDataProvider(), StreamingProvider)
-
-
-def test_stubs_raise_not_implemented() -> None:
-    with pytest.raises(NotImplementedError):
-        EODHDProvider().get_quote(Symbol("AAPL"))
 
 
 def test_missing_optional_dependency_is_a_configuration_error(
