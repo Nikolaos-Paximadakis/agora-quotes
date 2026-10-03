@@ -113,7 +113,7 @@ Or configure it in code:
 aq.configure(provider="yahoo", fallback="eodhd", cache_ttl=30)
 ```
 
-Arguments left as `None` are read from the environment. Providers can be given as names or instances, and reconfiguring empties the cache.
+Arguments left as `None` are read from the environment; `fallback=False` turns off a fallback that `AGORA_QUOTES_FALLBACK` sets. Providers can be given as names or instances, and reconfiguring empties the cache.
 
 **Fallback.** When the primary provider raises, the fallback is tried:
 

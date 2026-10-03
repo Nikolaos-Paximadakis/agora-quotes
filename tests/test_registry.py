@@ -34,6 +34,12 @@ def test_code_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert registry.settings().cache.ttl == 0
 
 
+def test_fallback_false_disables_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_QUOTES_FALLBACK", "yahoo")
+    aq.configure(fallback=False)
+    assert names() == ["yahoo"]
+
+
 def test_configure_accepts_instances() -> None:
     p = YahooProvider()
     aq.configure(provider=p)

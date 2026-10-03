@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 from agora_quotes.cache import TTLCache
 from agora_quotes.errors import ConfigurationError
@@ -62,19 +63,20 @@ def create_provider(name: str) -> Provider:
 
 def configure(
     provider: str | Provider | None = None,
-    fallback: str | Provider | None = None,
+    fallback: str | Provider | Literal[False] | None = None,
     cache_ttl: float | None = None,
 ) -> None:
     """Set the primary provider, an optional fallback and the cache TTL.
 
     Providers may be given by name or as instances. Arguments left as None are
-    read from the environment. Reconfiguring empties the cache.
+    read from the environment; ``fallback=False`` means no fallback, whatever
+    the environment says. Reconfiguring empties the cache.
     """
     global _settings
     primary = _resolve(provider, "AGORA_QUOTES_PROVIDER", default="yahoo")
     assert primary is not None
     chain = [primary]
-    second = _resolve(fallback, "AGORA_QUOTES_FALLBACK", default=None)
+    second = None if fallback is False else _resolve(fallback, "AGORA_QUOTES_FALLBACK", None)
     if second is not None:
         chain.append(second)
     if cache_ttl is None:
