@@ -113,9 +113,10 @@ class YahooProvider:
                 f"{interval} bars are only available for the last {max_age.days} days",
                 self.name,
             )
+        ticker = yf.Ticker(yahoo_symbol(symbol))
         try:
             with _quiet_yfinance():
-                df = yf.Ticker(yahoo_symbol(symbol)).history(
+                df = ticker.history(
                     start=start, end=end, interval=interval, auto_adjust=False, actions=False
                 )
         except YFRateLimitError as e:
@@ -130,24 +131,48 @@ class YahooProvider:
                 raise SymbolNotFound(str(symbol), self.name)
             return []
 
+        splits = self._splits(ticker)
         bars = []
         for ts, row in df.iterrows():
             if any(_missing(row[c]) for c in ("Open", "High", "Low", "Close")):
                 continue
+            factor = _split_factor(ts, splits)
             bars.append(
                 Bar(
                     symbol=str(symbol),
                     timestamp=ts.to_pydatetime(),
                     interval=interval,
-                    open=_unfloat32(row["Open"]),
-                    high=_unfloat32(row["High"]),
-                    low=_unfloat32(row["Low"]),
-                    close=_unfloat32(row["Close"]),
-                    volume=None if _missing(row["Volume"]) else float(row["Volume"]),
+                    open=_unadjust(row["Open"], factor),
+                    high=_unadjust(row["High"], factor),
+                    low=_unadjust(row["Low"], factor),
+                    close=_unadjust(row["Close"], factor),
+                    volume=None
+                    if _missing(row["Volume"])
+                    else float(round(float(row["Volume"]) / factor)),
                     source=self.name,
                 )
             )
         return bars
+
+    def _splits(self, ticker: Any) -> list[tuple[Any, float]]:
+        """Every split Yahoo knows for ``ticker``: (timestamp, new shares per old share).
+
+        Yahoo's ``Close`` is split-adjusted even with ``auto_adjust=False`` (that
+        flag only covers dividends), so the splits are needed to undo it. Fails
+        closed: if they can't be read, the bars would be silently adjusted.
+        """
+        try:
+            with _quiet_yfinance():
+                series = ticker.splits
+        except YFRateLimitError as e:
+            raise RateLimited(self.name) from e
+        except Exception as e:  # yfinance raises many unrelated types
+            raise ProviderError(f"split history: {type(e).__name__}: {e}", self.name) from e
+        if series is None:
+            raise ProviderError(
+                "split history unavailable; refusing to return split-adjusted prices", self.name
+            )
+        return [(ts, float(ratio)) for ts, ratio in series.items() if float(ratio) > 0]
 
     async def stream(self, symbols: Sequence[Symbol]) -> AsyncGenerator[Quote, None]:
         """Yield a quote for every regular-session price update until cancelled.
@@ -250,6 +275,30 @@ class YahooProvider:
 async def _close(sock: Any) -> None:
     with suppress(Exception):  # already gone; nothing to clean up
         await sock.close()
+
+
+def _split_factor(bar_time: Any, splits: list[tuple[Any, float]]) -> float:
+    """The ratio Yahoo divided this bar's prices by: every split after it, multiplied.
+
+    Compared by date in the split's own timezone, not by instant: Yahoo stamps a
+    split at the market open (10:30 Athens, 09:30 New York) and a daily bar at
+    local midnight, so the split day's own bar, already post-split, would
+    otherwise count as before it.
+    """
+    factor = 1.0
+    for split_time, ratio in splits:
+        if split_time.date() > bar_time.tz_convert(split_time.tz).date():
+            factor *= ratio
+    return factor
+
+
+def _unadjust(value: Any, factor: float) -> float:
+    price = _unfloat32(value)
+    if factor == 1.0:
+        return price
+    # 12 significant digits drop the binary noise of the multiplication
+    # (124.8075 * 4 = 499.22999999999996) and keep every digit Yahoo has.
+    return float(f"{price * factor:.12g}")
 
 
 def _missing(value: Any) -> bool:
