@@ -40,6 +40,11 @@ def test_fallback_false_disables_env_fallback(monkeypatch: pytest.MonkeyPatch) -
     assert names() == ["yahoo"]
 
 
+def test_fallback_true_is_rejected() -> None:
+    with pytest.raises(ConfigurationError, match="fallback=True"):
+        aq.configure(fallback=True)  # type: ignore[arg-type]
+
+
 def test_configure_accepts_instances() -> None:
     p = YahooProvider()
     aq.configure(provider=p)

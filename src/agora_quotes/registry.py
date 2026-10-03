@@ -73,6 +73,9 @@ def configure(
     the environment says. Reconfiguring empties the cache.
     """
     global _settings
+    # Only False is valid; untyped callers can still pass True.
+    if isinstance(fallback, bool) and fallback:
+        raise ConfigurationError("fallback=True is not valid; pass a provider, False or None")
     primary = _resolve(provider, "AGORA_QUOTES_PROVIDER", default="yahoo")
     assert primary is not None
     chain = [primary]
