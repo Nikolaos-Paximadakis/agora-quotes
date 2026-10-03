@@ -262,3 +262,28 @@ def test_malformed_responses_raise_provider_error(
     api.responses["AAPL"] = FakeResponse({"meta": {}, "values": [{"datetime": "2026-09-28"}]})
     with pytest.raises(ProviderError, match="bad time_series"):
         provider.get_history(AAPL, START, END, "1d")
+
+
+def test_quote_with_no_data_is_symbol_not_found_inline(
+    provider: TwelveDataProvider, api: FakeApi
+) -> None:
+    api.responses["EXAE"] = FakeResponse(
+        {"code": 404, "message": "No data is available for this symbol.", "status": "error"}
+    )
+    with pytest.raises(SymbolNotFound):
+        provider.get_quote(EXAE)
+    result = provider.get_quotes([AAPL, EXAE])
+    assert isinstance(result[EXAE], SymbolNotFound)
+    assert result[AAPL].price == 333.69  # type: ignore[union-attr]
+
+
+def test_rate_limit_mid_batch_keeps_quotes_already_fetched(
+    provider: TwelveDataProvider, api: FakeApi
+) -> None:
+    api.responses["EXAE"] = FakeResponse({"code": 429, "message": "out of credits"}, status=429)
+    result = provider.get_quotes([AAPL, EXAE, NOPE])
+    assert list(result) == [AAPL, EXAE, NOPE]
+    assert result[AAPL].price == 333.69  # type: ignore[union-attr]
+    assert isinstance(result[EXAE], RateLimited)
+    assert isinstance(result[NOPE], RateLimited)
+    assert [p["symbol"] for _, p in api.calls] == ["AAPL", "EXAE"]  # stopped at the limit

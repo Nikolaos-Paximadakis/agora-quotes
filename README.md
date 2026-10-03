@@ -54,7 +54,7 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 
 ### Quotes
 
-`get_quote` raises on failure. `get_quotes` returns a quote *or an error* for each symbol, so one bad ticker doesn't break a batch. Failures that affect the whole source still raise: `RateLimited`, `ProviderError`.
+`get_quote` raises on failure. `get_quotes` returns a quote *or an error* for each symbol, so one bad ticker doesn't break a batch. Failures that affect the whole source still raise: `RateLimited`, `ProviderError`. If a provider hits its rate limit partway through a batch (Twelve Data fetches one symbol per request), the quotes already fetched are kept and the remaining symbols get `RateLimited` inline.
 
 ### History
 

@@ -61,3 +61,15 @@ def test_all_adapters_satisfy_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_stubs_raise_not_implemented() -> None:
     with pytest.raises(NotImplementedError):
         EODHDProvider().get_quote(Symbol("AAPL"))
+
+
+def test_missing_optional_dependency_is_a_configuration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    for mod in [m for m in sys.modules if m.split(".")[0] == "twelvedata"]:
+        monkeypatch.setitem(sys.modules, mod, None)  # makes the import fail
+    monkeypatch.delitem(sys.modules, "agora_quotes.providers.twelvedata")
+    with pytest.raises(ConfigurationError, match=r"agora-quotes\[twelvedata\]"):
+        aq.configure(provider="twelvedata")

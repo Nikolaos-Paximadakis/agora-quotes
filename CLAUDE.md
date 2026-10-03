@@ -27,7 +27,7 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
   - `get_quotes` retries only the still-failing symbols on the next provider.
   - `_pick_error` returns `SymbolNotFound` only if every provider said so; otherwise it returns the first real failure.
   - `get_history` coerces `start`/`end` to UTC datetimes.
-- **`registry.py`** builds `Settings(providers=[primary, fallback?], cache)` from `configure()` args or the environment, read lazily on first use. `reset()` forgets it, and tests call it via the autouse fixture in `conftest.py`. Adapters are listed as `"module:Class"` strings and imported **lazily**, so vendor SDKs stay optional.
+- **`registry.py`** builds `Settings(providers=[primary, fallback?], cache)` from `configure()` args or the environment, read lazily on first use. `reset()` forgets it, and tests call it via the autouse fixture in `conftest.py`. Adapters are listed as `"module:Class"` strings and imported **lazily**, so vendor SDKs stay optional. A missing SDK raises `ConfigurationError` naming the extra to install.
 - **`cache.py`** is `TTLCache`, keyed by `Symbol`. It is per process, not shared between apps.
 - **`providers/base.py`** defines the `Provider` Protocol (sync; it receives `Symbol`s, not strings) and `StreamingProvider` (`stream()` is an **async generator**; callback SDKs bridge in via `asyncio.Queue`).
 - **`providers/yahoo.py`**, the only real adapter:
@@ -39,6 +39,7 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
   - Sends the ticker plus a MIC code from `MIC_CODES` (`ATHEX` → `XATH`); plain tickers mean US.
   - Calls `/quote` and `/time_series` through the client's `DefaultHttpClient`. `TDClient()` is avoided because constructing it makes a network request. `_HttpClient` keeps the API error code (429 → `RateLimited`, 404/400 symbol → `SymbolNotFound`, 403 plan → per-symbol `ProviderError`).
   - Quotes are always `delayed=True`: the API never reports real-time. History uses `adjust=none`; `end_date` is inclusive upstream, and daily+ bars start at midnight in the exchange's timezone (same as Yahoo).
+  - `get_quotes` makes one request per symbol. On a 429 after at least one success, it returns what it has and puts `RateLimited` inline for the rest.
   - `stream()` is still a stub.
 - **`providers/eodhd.py`** is a `NotImplementedError` stub.
 

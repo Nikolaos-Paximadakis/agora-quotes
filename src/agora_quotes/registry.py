@@ -48,7 +48,14 @@ def create_provider(name: str) -> Provider:
             f"unknown provider {name!r}; choose from {sorted(PROVIDERS)}"
         ) from None
     module_name, class_name = target.split(":")
-    cls = getattr(importlib.import_module(module_name), class_name)
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as e:
+        raise ConfigurationError(
+            f"provider {name!r} needs an optional dependency ({e.name}); "
+            f"install agora-quotes[{name}]"
+        ) from e
+    cls = getattr(module, class_name)
     provider: Provider = cls()
     return provider
 

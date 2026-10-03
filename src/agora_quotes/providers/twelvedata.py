@@ -85,7 +85,10 @@ class TwelveDataProvider:
         self._http = _HttpClient("https://api.twelvedata.com")
 
     def get_quote(self, symbol: Symbol) -> Quote:
-        data = self._get(symbol, "quote", twelvedata_params(symbol))
+        try:
+            data = self._get(symbol, "quote", twelvedata_params(symbol))
+        except _NoData as e:
+            raise SymbolNotFound(str(symbol), self.name) from e
         try:
             price = float(data["close"])
             market_time = datetime.fromtimestamp(
@@ -105,12 +108,20 @@ class TwelveDataProvider:
         )
 
     def get_quotes(self, symbols: Sequence[Symbol]) -> dict[Symbol, Quote | AgoraQuotesError]:
+        # One request per symbol. If the rate limit hits partway through, the
+        # quotes already paid for are returned and the rest fail inline, so
+        # the service can cache them and retry only the rest on the fallback.
         results: dict[Symbol, Quote | AgoraQuotesError] = {}
-        for symbol in symbols:
+        for i, symbol in enumerate(symbols):
             try:
                 results[symbol] = self.get_quote(symbol)
             except (SymbolNotFound, _NoAccess) as e:
                 results[symbol] = e
+            except RateLimited as e:
+                if not any(isinstance(v, Quote) for v in results.values()):
+                    raise
+                results.update(dict.fromkeys(symbols[i:], e))
+                break
         return results
 
     def get_history(
