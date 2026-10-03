@@ -66,6 +66,30 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 - **Intraday limits.** Yahoo serves intraday data only for recent periods: `1m` for 30 days, `5m`/`15m` for 60 days, `1h` for 730 days. Older requests raise `ProviderError`.
 - **Twelve Data** returns at most 5000 bars per request. A range that reaches that cap raises `ProviderError` rather than silently returning a truncated list; ask for a shorter range.
 
+### Streaming
+
+`aq.stream(symbols)` is an async generator that yields a `Quote` every time a price changes. It needs a provider that can stream, which is currently only Twelve Data (`agora-quotes[twelvedata]`).
+
+```python
+import asyncio
+import agora_quotes as aq
+
+aq.configure(provider="twelvedata")
+
+async def watch() -> None:
+    async for q in aq.stream(["AAPL", "ATHEX:EXAE"]):
+        print(q.symbol, q.price, q.timestamp)
+
+task = asyncio.create_task(watch())
+...
+task.cancel()   # disconnects the websocket
+```
+
+- **Which provider.** The stream uses the first configured provider that can stream: the primary, then the fallback. So `provider="yahoo", fallback="twelvedata"` streams from Twelve Data. If the stream fails, it does not fall over to another provider.
+- **Stopping.** Cancel the consuming task to disconnect. If you `break` out of the loop instead, wrap the generator in `contextlib.aclosing(...)` so it closes right away rather than when it is garbage-collected.
+- **Errors.** A rejected API key, a symbol Twelve Data refuses, or a connection that can't be restored after 5 reconnect attempts raises `ProviderError` from the loop. Brief drops are reconnected and resubscribed automatically.
+- **Quotes.** Streamed quotes are always `delayed=True`, the same as Twelve Data's REST quotes. They are not cached. Your Twelve Data plan decides which markets you can stream; check that ATHEX is covered before relying on it.
+
 ### Errors
 
 All errors subclass `aq.AgoraQuotesError`. Vendor exceptions never leak out; the original exception is kept as `__cause__`.
@@ -119,7 +143,7 @@ Check the current terms before showing quotes to anyone other than yourself.
 
 ## Adding a provider
 
-1. Create `src/agora_quotes/providers/<name>.py` with a class that has a `name` attribute and the `get_quote`, `get_quotes` and `get_history` methods of `providers/base.py:Provider`. Methods receive parsed `Symbol` objects; convert them to the vendor's format (see `yahoo_symbol`) and set `Quote.symbol`/`Bar.symbol` to `str(symbol)`. Add `stream` (an async generator) if the source can push updates.
+1. Create `src/agora_quotes/providers/<name>.py` with a class that has a `name` attribute and the `get_quote`, `get_quotes` and `get_history` methods of `providers/base.py:Provider`. Methods receive parsed `Symbol` objects; convert them to the vendor's format (see `yahoo_symbol`) and set `Quote.symbol`/`Bar.symbol` to `str(symbol)`. Add `stream` (an async generator, see `providers/base.py:StreamingProvider`) if the source can push updates; `aq.stream` picks it up automatically.
 2. Convert vendor responses into `Quote`/`Bar` with UTC timestamps. Set `delayed=False` only when the source says the data is real-time.
 3. Catch vendor exceptions and re-raise them as `SymbolNotFound`, `RateLimited` or `ProviderError` (`raise ... from e`).
 4. Read any API key from an environment variable and add it to `.env.example`.

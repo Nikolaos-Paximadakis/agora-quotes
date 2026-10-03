@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import date, datetime, time, timezone
 from typing import get_args
 
 from agora_quotes import registry
-from agora_quotes.errors import AgoraQuotesError, InvalidSymbol, ProviderError, SymbolNotFound
+from agora_quotes.errors import (
+    AgoraQuotesError,
+    ConfigurationError,
+    InvalidSymbol,
+    ProviderError,
+    SymbolNotFound,
+)
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.providers.base import StreamingProvider
 from agora_quotes.symbols import Symbol, parse
 
 
@@ -111,6 +118,25 @@ def get_history(
         except AgoraQuotesError as e:
             errors.append(e)
     raise _pick_error(errors)
+
+
+async def stream(symbols: Sequence[str]) -> AsyncIterator[Quote]:
+    """Yield a quote for every price update on ``symbols`` until cancelled.
+
+    Uses the first configured provider (primary, then fallback) that can
+    stream; there is no failover once the stream has started. Streamed quotes
+    bypass the cache. Cancel the consuming task, or close the generator, to
+    disconnect.
+    """
+    syms = [parse(s) for s in symbols]
+    provider = next(
+        (p for p in registry.settings().providers if isinstance(p, StreamingProvider)), None
+    )
+    if provider is None:
+        names = [p.name for p in registry.settings().providers]
+        raise ConfigurationError(f"none of the configured providers {names} can stream")
+    async for quote in provider.stream(syms):
+        yield quote
 
 
 def _pick_error(errors: list[AgoraQuotesError]) -> AgoraQuotesError:

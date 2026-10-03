@@ -23,10 +23,11 @@ uv run mypy                                      # --strict over src/ (config in
 Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → `providers/*`.
 
 - **`symbols.py`** has `parse()`, which turns caller strings (`ATHEX:EXAE`, `EXAE.AT`, `AAPL`) into a frozen, hashable `Symbol(ticker, exchange|None)`. `str(Symbol)` is the canonical form. Unparseable input raises `InvalidSymbol`.
-- **`service.py`** holds `get_quote`/`get_quotes`/`get_history`. It parses symbols, consults the cache (quotes only), and walks the provider chain.
+- **`service.py`** holds `get_quote`/`get_quotes`/`get_history`/`stream`. It parses symbols, consults the cache (quotes only), and walks the provider chain.
   - `get_quotes` retries only the still-failing symbols on the next provider.
   - `_pick_error` returns `SymbolNotFound` only if every provider said so; otherwise it returns the first real failure.
   - `get_history` coerces `start`/`end` to UTC datetimes.
+  - `stream` uses the first provider in the chain that is a `StreamingProvider`. It does not fail over mid-stream and bypasses the cache.
 - **`registry.py`** builds `Settings(providers=[primary, fallback?], cache)` from `configure()` args or the environment, read lazily on first use. `reset()` forgets it, and tests call it via the autouse fixture in `conftest.py`. Adapters are listed as `"module:Class"` strings and imported **lazily**, so vendor SDKs stay optional. A missing SDK raises `ConfigurationError` naming the extra to install.
 - **`cache.py`** is `TTLCache`, keyed by `Symbol`. It is per process, not shared between apps.
 - **`providers/base.py`** defines the `Provider` Protocol (sync; it receives `Symbol`s, not strings) and `StreamingProvider` (`stream()` is an **async generator**; callback SDKs bridge in via `asyncio.Queue`).
@@ -40,7 +41,11 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
   - Calls `/quote` and `/time_series` through the client's `DefaultHttpClient`. `TDClient()` is avoided because constructing it makes a network request. `_HttpClient` keeps the API error code (429 → `RateLimited`, 404/400 symbol → `SymbolNotFound`, 403 plan → per-symbol `ProviderError`).
   - Quotes are always `delayed=True`: the API never reports real-time. History uses `adjust=none`; `end_date` is inclusive upstream, and daily+ bars start at midnight in the exchange's timezone (same as Yahoo).
   - `get_quotes` makes one request per symbol. On a 429 after at least one success, it returns what it has and puts `RateLimited` inline for the rest.
-  - `stream()` is still a stub.
+  - `stream()` wraps the SDK's `TDWebSocket` (it needs `websocket-client`, which the SDK doesn't declare, so the extra adds it). The subclass `_Socket` fills gaps in the SDK client:
+    - It subscribes with `{"symbol", "mic_code"}` objects.
+    - It reports a failed first connection, or more than `MAX_RECONNECTS` failed reconnects, as `ProviderError` instead of retrying forever.
+    - On close it ends the SDK's dispatch thread by raising `SystemExit` from `on_event`. That is the only way out of the SDK's loop; the tests filter pytest's warning about it.
+  - Events cross from the SDK threads via `loop.call_soon_threadsafe` into an `asyncio.Queue`. The generator sends a heartbeat every `HEARTBEAT_S` and closes the socket in `finally`. A rejected subscription raises; it is not skipped.
 - **`providers/eodhd.py`** is a `NotImplementedError` stub.
 
 ## Invariants (tests depend on these)
@@ -53,7 +58,7 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
 - **Batches return errors inline.** `get_quotes` returns `dict[str, Quote | AgoraQuotesError]`, keyed by the symbol string as passed and in input order. `Quote.symbol` is canonical. Per-symbol failures are values; source-wide failures (`RateLimited`, `ProviderError`) raise.
 - **No vendor exceptions escape.** Adapters wrap everything in `errors.py` types with `raise ... from e`.
 - **API keys come only from environment variables.** Document new ones in `.env.example`. `.env` is gitignored.
-- **No network in tests.** `tests/conftest.py` blocks sockets for every test unless it is marked `live`. Mock vendor SDKs instead (`tests/test_yahoo.py` monkeypatches `yahoo.yf.Ticker`). To test the service layer, use `tests/fakes.py:FakeProvider`, which records calls.
+- **No network in tests.** `tests/conftest.py` blocks DNS and non-Unix socket connects for every test unless it is marked `live`; local socketpairs stay allowed so `asyncio.run` works. Streaming tests run the SDK's real threads over a fake `websocket.WebSocketApp` (`tests/test_twelvedata_stream.py`). Mock vendor SDKs instead (`tests/test_yahoo.py` monkeypatches `yahoo.yf.Ticker`). To test the service layer, use `tests/fakes.py:FakeProvider`, which records calls.
 
 ## Conventions
 

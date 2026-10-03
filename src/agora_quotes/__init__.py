@@ -4,6 +4,7 @@ import agora_quotes as aq
 aq.get_quote("EXAE.AT")
 aq.get_quotes(["AAPL", "ATHEX:EXAE"])
 aq.get_history("AAPL", start="2026-01-01", interval="1d")
+async for q in aq.stream(["AAPL", "ATHEX:EXAE"]): ...
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from agora_quotes.errors import (
 )
 from agora_quotes.models import Bar, Interval, Quote
 from agora_quotes.registry import configure
-from agora_quotes.service import get_history, get_quote, get_quotes
+from agora_quotes.service import get_history, get_quote, get_quotes, stream
 from agora_quotes.symbols import Symbol
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "get_history",
     "get_quote",
     "get_quotes",
+    "stream",
 ]

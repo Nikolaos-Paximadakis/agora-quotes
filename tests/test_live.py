@@ -1,5 +1,6 @@
 """Real network calls; skipped unless AGORA_QUOTES_LIVE_TESTS=1."""
 
+import asyncio
 import os
 
 import pytest
@@ -43,3 +44,20 @@ def test_live_twelvedata_us_quote_and_history() -> None:
     bars = aq.get_history("AAPL", start="2026-09-01", end="2026-10-01")
     assert len(bars) > 15
     assert all(b.source == "twelvedata" and b.timestamp.tzinfo is not None for b in bars)
+
+
+@pytest.mark.skipif(not os.environ.get("TWELVEDATA_API_KEY"), reason="TWELVEDATA_API_KEY not set")
+def test_live_twelvedata_stream() -> None:
+    aq.configure(provider="twelvedata")
+
+    async def first_quote() -> aq.Quote:
+        async for q in aq.stream(["AAPL"]):
+            return q
+        raise AssertionError("stream ended")
+
+    try:
+        q = asyncio.run(asyncio.wait_for(first_quote(), timeout=30))
+    except asyncio.TimeoutError:
+        pytest.skip("no AAPL price update within 30s (market closed?)")
+    assert (q.symbol, q.source, q.delayed) == ("AAPL", "twelvedata", True)
+    assert q.price > 0

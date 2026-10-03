@@ -1,10 +1,17 @@
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from fakes import FakeProvider
+from fakes import FakeProvider, FakeStreamer
 
 import agora_quotes as aq
-from agora_quotes import InvalidSymbol, ProviderError, RateLimited, SymbolNotFound
+from agora_quotes import (
+    ConfigurationError,
+    InvalidSymbol,
+    ProviderError,
+    RateLimited,
+    SymbolNotFound,
+)
 
 UTC = timezone.utc
 
@@ -188,3 +195,37 @@ def test_history_falls_back() -> None:
         FakeProvider("backup", {"AAPL": 1.0}),
     )
     assert aq.get_history("AAPL", start="2026-01-01")[0].source == "backup"
+
+
+# stream ------------------------------------------------------------------
+
+
+def collect(symbols: list[str]) -> list[aq.Quote]:
+    async def run() -> list[aq.Quote]:
+        return [q async for q in aq.stream(symbols)]
+
+    return asyncio.run(run())
+
+
+def test_stream_uses_the_first_provider_that_can_stream() -> None:
+    primary = FakeProvider("p", {"AAPL": 1.0})
+    streamer = FakeStreamer("s", {"AAPL": 2.0, "ATHEX:EXAE": 10.0})
+    setup(primary, streamer)
+    quotes = collect(["EXAE.AT", "AAPL"])
+    assert [(q.symbol, q.source) for q in quotes] == [("ATHEX:EXAE", "s"), ("AAPL", "s")]
+    assert streamer.calls == [("stream", ["ATHEX:EXAE", "AAPL"])]
+    assert primary.calls == []
+
+
+def test_stream_without_a_streaming_provider_is_a_configuration_error() -> None:
+    setup(FakeProvider("p", {}))
+    with pytest.raises(ConfigurationError, match="can stream"):
+        collect(["AAPL"])
+
+
+def test_stream_rejects_invalid_symbols_before_connecting() -> None:
+    streamer = FakeStreamer("s", {})
+    setup(streamer)
+    with pytest.raises(InvalidSymbol):
+        collect(["NOPE:AAPL"])
+    assert streamer.calls == []

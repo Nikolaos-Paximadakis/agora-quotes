@@ -23,8 +23,21 @@ def _no_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch)
     def guard(*args: object, **kwargs: object) -> None:
         raise RuntimeError("tests must not touch the network; mock the provider")
 
-    monkeypatch.setattr(socket, "socket", guard)
+    class LocalOnlySocket(socket.socket):
+        # asyncio needs local socketpairs for its event loop; block the rest.
+        def connect(self, address: object) -> None:
+            if self.family != socket.AF_UNIX:
+                guard()
+            super().connect(address)  # type: ignore[arg-type]
+
+        def connect_ex(self, address: object) -> int:
+            if self.family != socket.AF_UNIX:
+                guard()
+            return super().connect_ex(address)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(socket, "socket", LocalOnlySocket)
     monkeypatch.setattr(socket, "create_connection", guard)
+    monkeypatch.setattr(socket, "getaddrinfo", guard)
 
 
 @pytest.fixture(autouse=True)

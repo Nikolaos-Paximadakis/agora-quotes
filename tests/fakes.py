@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timezone
 
 from agora_quotes import AgoraQuotesError, Bar, Interval, Quote, SymbolNotFound
@@ -53,3 +53,12 @@ class FakeProvider:
             raise SymbolNotFound(str(symbol), self.name)
         p = self.prices[str(symbol)]
         return [Bar(str(symbol), start, interval, p, p, p, p, None, self.name)]
+
+
+class FakeStreamer(FakeProvider):
+    """A FakeProvider that can also stream; yields one quote per symbol."""
+
+    async def stream(self, symbols: Sequence[Symbol]) -> AsyncIterator[Quote]:
+        self.calls.append(("stream", [str(s) for s in symbols]))
+        for s in symbols:
+            yield self._quote(s)
