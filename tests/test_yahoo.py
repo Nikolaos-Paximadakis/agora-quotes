@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import pandas as pd
 import pytest
@@ -48,6 +48,15 @@ def history_frame(rows: list[tuple[str, float, float | None]]) -> pd.DataFrame:
     )
 
 
+def splits_series(rows: list[tuple[str, float]], tz: str = "Europe/Athens") -> pd.Series:
+    """Shaped like yfinance's ``Ticker.splits``: stamped at the market open, in the
+    exchange's named timezone."""
+    index = pd.DatetimeIndex(
+        pd.to_datetime([ts for ts, _ in rows], utc=True), name="Date"
+    ).tz_convert(tz)
+    return pd.Series([r for _, r in rows], index=index, name="Stock Splits", dtype=float)
+
+
 @pytest.fixture
 def tickers(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     """Fake yf.Ticker; tests may set ``.history.return_value`` per Yahoo symbol."""
@@ -58,6 +67,7 @@ def tickers(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
             t = MagicMock()
             t.info = INFO.get(symbol, {"trailingPegRatio": None})
             t.history.return_value = history_frame([])
+            t.splits = splits_series([])
             made[symbol] = t
         return made[symbol]
 
@@ -177,6 +187,111 @@ def test_history_strips_float32_noise(tickers: dict[str, MagicMock]) -> None:
     bars = YahooProvider().get_history(EXAE, START, END, "1d")
     assert [b.close for b in bars] == [340.37, 12345.67, 0.1 + 0.2]
     assert bars[0].open == bars[0].high == bars[0].low == 340.37
+
+
+def test_history_undoes_a_later_split(tickers: dict[str, MagicMock]) -> None:
+    # AAPL's 4:1 split of 2020-08-31, as Yahoo serves it: the 08-28 close and
+    # volume are already divided/multiplied by 4, the split day's are real.
+    yahoo.yf.Ticker("AAPL").history.return_value = history_frame(
+        [
+            ("2020-08-28 00:00:00-04:00", 124.807503, 187630000),
+            ("2020-08-31 00:00:00-04:00", 129.039993, 225702700),
+        ]
+    )
+    tickers["AAPL"].splits = splits_series(
+        [("2020-08-31 09:30:00-04:00", 4.0)], tz="America/New_York"
+    )
+    start, end = datetime(2020, 8, 28, tzinfo=UTC), datetime(2020, 9, 1, tzinfo=UTC)
+
+    bars = YahooProvider().get_history(AAPL, start, end, "1d")
+
+    assert [b.close for b in bars] == [499.230012, 129.039993]
+    assert [b.volume for b in bars] == [46907500, 225702700]
+    assert bars[0].open == bars[0].high == bars[0].low == bars[0].close
+
+
+def test_split_day_bar_is_not_undone_though_stamped_before_the_split(
+    tickers: dict[str, MagicMock],
+) -> None:
+    # ETE's 1:10 reverse split of 2018-08-29. The daily bar is stamped at Athens
+    # midnight, the split at the 10:30 open: comparing instants would undo the
+    # split on the split day's own (already post-split) bar.
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [
+            ("2018-08-28 00:00:00+03:00", 2.448, 111246),
+            ("2018-08-29 00:00:00+03:00", 2.35, 1482195),
+        ]
+    )
+    tickers["EXAE.AT"].splits = splits_series([("2018-08-29 10:30:00+03:00", 0.1)])
+    start, end = datetime(2018, 8, 27, tzinfo=UTC), datetime(2018, 8, 30, tzinfo=UTC)
+
+    bars = YahooProvider().get_history(EXAE, start, end, "1d")
+
+    assert [b.close for b in bars] == [0.2448, 2.35]
+    assert [b.volume for b in bars] == [1112460, 1482195]
+
+
+def test_every_later_split_is_undone_and_earlier_ones_are_not(
+    tickers: dict[str, MagicMock],
+) -> None:
+    # Yahoo adjusts to today, so a split after the requested range still counts.
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [("2020-06-01 00:00:00+03:00", 10.0, 100)]
+    )
+    tickers["EXAE.AT"].splits = splits_series(
+        [
+            ("2019-01-10 10:30:00+02:00", 5.0),  # before the bar: already in its price
+            ("2021-03-01 10:30:00+02:00", 2.0),
+            ("2024-05-02 10:30:00+03:00", 0.5),
+            ("2025-07-01 10:30:00+03:00", 3.0),
+        ]
+    )
+
+    bars = YahooProvider().get_history(EXAE, START - timedelta(days=3000), START, "1d")
+
+    assert bars[0].close == 30.0
+    assert bars[0].volume == 33
+
+
+def test_intraday_bars_on_the_split_day_are_post_split(tickers: dict[str, MagicMock]) -> None:
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [
+            ("2026-09-28 16:30:00+03:00", 4.0, 10),  # the day before the split
+            ("2026-09-29 10:30:00+03:00", 2.0, 10),  # the split day, at the open
+        ]
+    )
+    tickers["EXAE.AT"].splits = splits_series([("2026-09-29 10:30:00+03:00", 2.0)])
+    now = datetime.now(UTC)
+
+    bars = YahooProvider().get_history(EXAE, now - timedelta(days=5), now, "1h")
+
+    assert [b.close for b in bars] == [8.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("failure", "error"),
+    [
+        pytest.param(None, ProviderError, id="no-split-history"),
+        pytest.param(KeyError("chart"), ProviderError, id="split-fetch-raises"),
+        pytest.param(YFRateLimitError(), RateLimited, id="split-fetch-rate-limited"),
+    ],
+)
+def test_unreadable_split_history_fails_instead_of_returning_adjusted_prices(
+    tickers: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, failure: Any, error: type
+) -> None:
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [("2026-09-28 00:00:00+03:00", 11.3, 99909)]
+    )
+    ticker = tickers["EXAE.AT"]
+    if failure is None:
+        ticker.splits = None
+    else:
+        monkeypatch.setattr(
+            type(ticker), "splits", PropertyMock(side_effect=failure), raising=False
+        )
+
+    with pytest.raises(error):
+        YahooProvider().get_history(EXAE, START, END, "1d")
 
 
 def test_empty_history_for_existing_symbol_is_empty_list(tickers: dict[str, MagicMock]) -> None:

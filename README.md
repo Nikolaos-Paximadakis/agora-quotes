@@ -61,7 +61,8 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 `get_history(symbol, start, end=None, interval="1d")` returns a `list[Bar]` with `start <= timestamp < end`. `end` defaults to now.
 
 - **Arguments.** `start` and `end` take an ISO string, a `date` (both mean midnight UTC) or a timezone-aware `datetime`. Intervals: `1m`, `5m`, `15m`, `1h`, `1d`, `1wk`, `1mo`.
-- **Prices** are **unadjusted** for splits and dividends.
+- **Prices** are **unadjusted** for splits and dividends: each bar is the price that actually traded that day, so it can be multiplied by the quantity held that day. Yahoo serves split-adjusted closes even with dividend adjustment off, so the Yahoo adapter reads the symbol's split history (one extra request) and undoes every split dated after each bar; if that history can't be read, the call raises `ProviderError` rather than return adjusted prices. Volume is un-adjusted the same way. Because Yahoo stores prices as float32, a bar from before a large reverse split carries only the digits Yahoo kept.
+- **Suspensions.** Yahoo can fill a trading suspension with flat zero-volume bars repeating a stale price, and occasionally serves an outlier; check `volume` before trusting a single bar.
 - **Results.** A range with no trading returns `[]`; an unknown symbol raises `SymbolNotFound`.
 - **Intraday limits.** Yahoo serves intraday data only for recent periods: `1m` for 30 days, `5m`/`15m` for 60 days, `1h` for 730 days. Older requests raise `ProviderError`.
 - **Twelve Data** returns at most 5000 bars per request. A range that reaches that cap raises `ProviderError` rather than silently returning a truncated list; ask for a shorter range.

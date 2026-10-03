@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -32,6 +33,25 @@ def test_live_history_greek_daily() -> None:
     bars = aq.get_history("ATHEX:EXAE", start="2026-09-01", end="2026-10-01")
     assert len(bars) > 15
     assert all(b.symbol == "ATHEX:EXAE" and b.timestamp.tzinfo is not None for b in bars)
+
+
+def test_live_history_is_not_split_adjusted() -> None:
+    # AAPL split 4:1 on 2020-08-31 and closed at 499.23 the session before;
+    # Yahoo itself serves 124.81 there (agora-quotes#9).
+    bars = aq.get_history("AAPL", start="2020-08-28", end="2020-08-29")
+    assert len(bars) == 1
+    assert bars[0].close == pytest.approx(499.23, abs=0.01)
+
+
+def test_live_greek_history_is_not_reverse_split_adjusted() -> None:
+    # ETE (National Bank of Greece) reverse-split 1:10 on 2018-08-29. Bars are
+    # picked by their Athens date: a daily bar starts at Athens midnight, which
+    # is the previous day in UTC.
+    athens = ZoneInfo("Europe/Athens")
+    bars = aq.get_history("ATHEX:ETE", start="2018-08-20", end="2018-09-10")
+    close = {b.timestamp.astimezone(athens).date().isoformat(): b.close for b in bars}
+    assert close["2018-08-28"] == pytest.approx(0.2448, abs=0.0001)
+    assert close["2018-09-03"] == pytest.approx(2.35, abs=0.01)
 
 
 def test_live_yahoo_stream() -> None:
