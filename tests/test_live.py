@@ -63,11 +63,16 @@ def test_live_twelvedata_stream() -> None:
     assert q.price > 0
 
 
-def test_live_eodhd_quotes_and_history(monkeypatch: pytest.MonkeyPatch) -> None:
+def _eodhd_key(monkeypatch: pytest.MonkeyPatch) -> str:
     # EODHD's public "demo" key covers a few US tickers (AAPL.US, TSLA.US, ...).
     key = os.environ.get("EODHD_API_KEY") or "demo"
     monkeypatch.setenv("EODHD_API_KEY", key)
     aq.configure(provider="eodhd", cache_ttl=0)
+    return key
+
+
+def test_live_eodhd_quotes_and_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    key = _eodhd_key(monkeypatch)
     result = aq.get_quotes(["AAPL", "TSLA"])
     for sym, q in result.items():
         assert isinstance(q, aq.Quote), q
@@ -76,12 +81,21 @@ def test_live_eodhd_quotes_and_history(monkeypatch: pytest.MonkeyPatch) -> None:
     bars = aq.get_history("AAPL", start="2026-09-01", end="2026-10-01")
     assert len(bars) > 15
     assert all(b.source == "eodhd" and b.timestamp.tzinfo is not None for b in bars)
-    bars = aq.get_history(
-        "AAPL", start="2026-09-21T14:30Z", end="2026-09-21T16:30Z", interval="15m"
-    )
-    assert len(bars) == 8
     if key == "demo":
         return  # the demo key answers 403 for every other ticker
     assert isinstance(aq.get_quotes(["NOPEZZZ"])["NOPEZZZ"], aq.SymbolNotFound)
     q = aq.get_quote("ATHEX:EXAE")
     assert (q.currency, q.delayed) == ("EUR", True)
+
+
+def test_live_eodhd_intraday(monkeypatch: pytest.MonkeyPatch) -> None:
+    _eodhd_key(monkeypatch)
+    try:
+        bars = aq.get_history(
+            "AAPL", start="2026-09-21T14:30Z", end="2026-09-21T16:30Z", interval="15m"
+        )
+    except aq.ProviderError as e:
+        if "only eod data" in str(e).lower():
+            pytest.skip("the EODHD plan has no intraday data")
+        raise
+    assert len(bars) == 8

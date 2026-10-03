@@ -65,7 +65,7 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 - **Results.** A range with no trading returns `[]`; an unknown symbol raises `SymbolNotFound`.
 - **Intraday limits.** Yahoo serves intraday data only for recent periods: `1m` for 30 days, `5m`/`15m` for 60 days, `1h` for 730 days. Older requests raise `ProviderError`.
 - **Twelve Data** returns at most 5000 bars per request. A range that reaches that cap raises `ProviderError` rather than silently returning a truncated list; ask for a shorter range.
-- **EODHD** serves at most 120 days of `1m` bars and 600 days of `5m`/`15m` bars per request (7200 days of `1h`). Longer ranges raise `ProviderError` before any request is made. Weekly and monthly bars start on the first trading day of the week or month.
+- **EODHD** serves at most 120 days of `1m` bars and 600 days of `5m`/`15m` bars per request (7200 days of `1h`). Longer ranges raise `ProviderError` before any request is made. Weekly and monthly bars start on the first trading day of the week or month. EODHD's free plan has no intraday data, so intraday requests on it raise `ProviderError`.
 
 ### Streaming
 
