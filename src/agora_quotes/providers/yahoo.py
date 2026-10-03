@@ -18,6 +18,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import numpy as np
 import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
 
@@ -138,10 +139,10 @@ class YahooProvider:
                     symbol=str(symbol),
                     timestamp=ts.to_pydatetime(),
                     interval=interval,
-                    open=float(row["Open"]),
-                    high=float(row["High"]),
-                    low=float(row["Low"]),
-                    close=float(row["Close"]),
+                    open=_unfloat32(row["Open"]),
+                    high=_unfloat32(row["High"]),
+                    low=_unfloat32(row["Low"]),
+                    close=_unfloat32(row["Close"]),
                     volume=None if _missing(row["Volume"]) else float(row["Volume"]),
                     source=self.name,
                 )
@@ -253,3 +254,14 @@ async def _close(sock: Any) -> None:
 
 def _missing(value: Any) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def _unfloat32(value: Any) -> float:
+    """Undo float32 widening noise: 340.3699951171875 -> 340.37.
+
+    Yahoo serves history prices as float32. A value that is exactly a float32
+    becomes the shortest decimal that rounds to it; any other value is kept.
+    """
+    x = float(value)
+    f32 = np.float32(x)
+    return float(str(f32)) if float(f32) == x else x

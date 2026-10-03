@@ -22,6 +22,9 @@ name = "agora-quotes"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "yfinance" },
 ]
 
@@ -42,6 +45,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy" },
     { name = "twelvedata", marker = "extra == 'twelvedata'", specifier = ">=1.4.0" },
     { name = "websocket-client", marker = "extra == 'twelvedata'", specifier = ">=1.6" },
     { name = "yfinance", specifier = ">=0.2.60" },

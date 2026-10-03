@@ -5,6 +5,7 @@ description = "One consistent interface for stock market quotes (ATHEX first, pl
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "numpy",
     "yfinance>=0.2.60",
 ]
 

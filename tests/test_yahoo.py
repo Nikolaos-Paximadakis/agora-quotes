@@ -166,6 +166,19 @@ def test_history_converts_rows_to_utc_bars(tickers: dict[str, MagicMock]) -> Non
     )
 
 
+def test_history_strips_float32_noise(tickers: dict[str, MagicMock]) -> None:
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [
+            ("2026-09-28 00:00:00+03:00", 340.3699951171875, 1),  # float32 of 340.37
+            ("2026-09-29 00:00:00+03:00", 12345.669921875, 1),  # float32 of 12345.67
+            ("2026-09-30 00:00:00+03:00", 0.1 + 0.2, 1),  # not a float32: kept as is
+        ]
+    )
+    bars = YahooProvider().get_history(EXAE, START, END, "1d")
+    assert [b.close for b in bars] == [340.37, 12345.67, 0.1 + 0.2]
+    assert bars[0].open == bars[0].high == bars[0].low == 340.37
+
+
 def test_empty_history_for_existing_symbol_is_empty_list(tickers: dict[str, MagicMock]) -> None:
     assert YahooProvider().get_history(AAPL, START, END, "1d") == []
 
