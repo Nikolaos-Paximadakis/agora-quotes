@@ -20,15 +20,22 @@ uv run mypy                                      # --strict over src/ (config in
 
 ## Architecture
 
-- `__init__.py` is the public API: `get_quote`, `get_quotes`, `configure`, models and errors. It delegates to `registry.get_provider()`.
-- `registry.py` maps a provider name to `"module:Class"` and imports adapters **lazily**, so vendor SDKs stay optional. The active provider comes from `configure()` or `AGORA_QUOTES_PROVIDER` (default `yahoo`).
-- `providers/base.py` defines two Protocols:
-  - `Provider` (sync): `get_quote`, `get_quotes`, `get_history`.
-  - `StreamingProvider`: `stream()`, an **async generator**. Callback SDKs bridge in through an `asyncio.Queue`.
-- `providers/yahoo.py` is the only real adapter. It reads `yf.Ticker(sym).info`:
-  - price comes from `regularMarketPrice`, the market timestamp from `regularMarketTime`, and the delay from `exchangeDataDelayedBy`.
-  - An unknown symbol doesn't raise in yfinance; `info` is nearly empty instead, and the adapter maps that to `SymbolNotFound`.
-- `providers/twelvedata.py` and `providers/eodhd.py` are `NotImplementedError` stubs.
+Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → `providers/*`.
+
+- **`symbols.py`** has `parse()`, which turns caller strings (`ATHEX:EXAE`, `EXAE.AT`, `AAPL`) into a frozen, hashable `Symbol(ticker, exchange|None)`. `str(Symbol)` is the canonical form. Unparseable input raises `InvalidSymbol`.
+- **`service.py`** holds `get_quote`/`get_quotes`/`get_history`. It parses symbols, consults the cache (quotes only), and walks the provider chain.
+  - `get_quotes` retries only the still-failing symbols on the next provider.
+  - `_pick_error` returns `SymbolNotFound` only if every provider said so; otherwise it returns the first real failure.
+  - `get_history` coerces `start`/`end` to UTC datetimes.
+- **`registry.py`** builds `Settings(providers=[primary, fallback?], cache)` from `configure()` args or the environment, read lazily on first use. `reset()` forgets it, and tests call it via the autouse fixture in `conftest.py`. Adapters are listed as `"module:Class"` strings and imported **lazily**, so vendor SDKs stay optional.
+- **`cache.py`** is `TTLCache`, keyed by `Symbol`. It is per process, not shared between apps.
+- **`providers/base.py`** defines the `Provider` Protocol (sync; it receives `Symbol`s, not strings) and `StreamingProvider` (`stream()` is an **async generator**; callback SDKs bridge in via `asyncio.Queue`).
+- **`providers/yahoo.py`**, the only real adapter:
+  - `yahoo_symbol()` maps a Symbol to a Yahoo ticker.
+  - Quotes come from `Ticker.info` (`regularMarketPrice`, `regularMarketTime`, `exchangeDataDelayedBy`).
+  - History comes from `Ticker.history(auto_adjust=False)`.
+- **yfinance quirks the Yahoo adapter handles.** yfinance never raises for bad symbols. `info` comes back nearly empty, and `history` returns an empty frame both for unknown symbols and for no-trading ranges. So the adapter checks `info` when `history` is empty, and rejects too-old intraday ranges up front using `INTRADAY_MAX_AGE`.
+- **`providers/twelvedata.py`, `providers/eodhd.py`** are `NotImplementedError` stubs.
 
 ## Invariants (tests depend on these)
 
@@ -37,10 +44,10 @@ uv run mypy                                      # --strict over src/ (config in
   - `Quote.timestamp` is the market time of the price.
   - `Quote.retrieved_at` is the time of the fetch.
 - **Prices are `float`.** Bars are **unadjusted**.
-- **Batches return errors inline.** `get_quotes` returns `dict[str, Quote | AgoraQuotesError]`, keyed by the symbol string as passed. Per-symbol failures are values; source-wide failures (`RateLimited`, `ProviderError`) raise.
+- **Batches return errors inline.** `get_quotes` returns `dict[str, Quote | AgoraQuotesError]`, keyed by the symbol string as passed and in input order. `Quote.symbol` is canonical. Per-symbol failures are values; source-wide failures (`RateLimited`, `ProviderError`) raise.
 - **No vendor exceptions escape.** Adapters wrap everything in `errors.py` types with `raise ... from e`.
 - **API keys come only from environment variables.** Document new ones in `.env.example`. `.env` is gitignored.
-- **No network in tests.** `tests/conftest.py` blocks sockets for every test unless it is marked `live`. Mock vendor SDKs instead (see `tests/test_yahoo.py`, which monkeypatches `yahoo.yf.Ticker`).
+- **No network in tests.** `tests/conftest.py` blocks sockets for every test unless it is marked `live`. Mock vendor SDKs instead (`tests/test_yahoo.py` monkeypatches `yahoo.yf.Ticker`). To test the service layer, use `tests/fakes.py:FakeProvider`, which records calls.
 
 ## Conventions
 
@@ -48,10 +55,8 @@ uv run mypy                                      # --strict over src/ (config in
 - Requires Python >= 3.10, so ruff targets py310 and mypy uses python_version 3.10. The local interpreter is 3.14.
 - Make small, well-described git commits per milestone.
 
-## Roadmap (milestone 2, not built yet)
+## Not built yet
 
-- `get_history` returning `list[Bar]`.
-- An in-process TTL quote cache. It is per process, not shared across apps.
-- `symbols.py` normalization: `"ATHEX:EXAE"`, `"EXAE.AT"` and plain `"AAPL"` parse to `Symbol(ticker, exchange)`, and each provider formats its own native form.
-- A fallback provider through `AGORA_QUOTES_FALLBACK`; in `get_quotes`, only failed symbols are retried.
-- `AGORA_QUOTES_CACHE_TTL`.
+- The Twelve Data and EODHD adapters.
+- Streaming implementations: only the Protocol exists.
+- A cache shared across processes.
