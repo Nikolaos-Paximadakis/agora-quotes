@@ -8,6 +8,11 @@ dependencies = [
     "yfinance>=0.2.60",
 ]
 
+[project.optional-dependencies]
+twelvedata = [
+    "twelvedata>=1.4.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -20,6 +25,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.11",
     "mypy>=1.15",
+    "twelvedata>=1.4.0",
 ]
 
 [tool.pytest.ini_options]
@@ -39,5 +45,5 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["yfinance", "yfinance.*"]
+module = ["yfinance", "yfinance.*", "twelvedata", "twelvedata.*"]
 ignore_missing_imports = true

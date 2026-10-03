@@ -35,7 +35,12 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
   - Quotes come from `Ticker.info` (`regularMarketPrice`, `regularMarketTime`, `exchangeDataDelayedBy`).
   - History comes from `Ticker.history(auto_adjust=False)`.
 - **yfinance quirks the Yahoo adapter handles.** yfinance never raises for bad symbols. `info` comes back nearly empty, and `history` returns an empty frame both for unknown symbols and for no-trading ranges. So the adapter checks `info` when `history` is empty, and rejects too-old intraday ranges up front using `INTRADAY_MAX_AGE`.
-- **`providers/twelvedata.py`, `providers/eodhd.py`** are `NotImplementedError` stubs.
+- **`providers/twelvedata.py`** (optional extra `agora-quotes[twelvedata]`; also in the dev group):
+  - Sends the ticker plus a MIC code from `MIC_CODES` (`ATHEX` → `XATH`); plain tickers mean US.
+  - Calls `/quote` and `/time_series` through the client's `DefaultHttpClient`. `TDClient()` is avoided because constructing it makes a network request. `_HttpClient` keeps the API error code (429 → `RateLimited`, 404/400 symbol → `SymbolNotFound`, 403 plan → per-symbol `ProviderError`).
+  - Quotes are always `delayed=True`: the API never reports real-time. History uses `adjust=none`; `end_date` is inclusive upstream, and daily+ bars start at midnight in the exchange's timezone (same as Yahoo).
+  - `stream()` is still a stub.
+- **`providers/eodhd.py`** is a `NotImplementedError` stub.
 
 ## Invariants (tests depend on these)
 

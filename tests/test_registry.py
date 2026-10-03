@@ -28,6 +28,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_code_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGORA_QUOTES_PROVIDER", "eodhd")
+    monkeypatch.setenv("TWELVEDATA_API_KEY", "test-key")
     aq.configure(provider="yahoo", fallback="twelvedata", cache_ttl=0)
     assert names() == ["yahoo", "twelvedata"]
     assert registry.settings().cache.ttl == 0
@@ -50,14 +51,13 @@ def test_bad_cache_ttl_env(monkeypatch: pytest.MonkeyPatch) -> None:
         registry.settings()
 
 
-def test_all_adapters_satisfy_protocol() -> None:
+def test_all_adapters_satisfy_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TWELVEDATA_API_KEY", "test-key")
     for cls in (YahooProvider, TwelveDataProvider, EODHDProvider):
         assert isinstance(cls(), Provider)
     assert isinstance(TwelveDataProvider(), StreamingProvider)
 
 
 def test_stubs_raise_not_implemented() -> None:
-    with pytest.raises(NotImplementedError):
-        TwelveDataProvider().get_quote(Symbol("AAPL"))
     with pytest.raises(NotImplementedError):
         EODHDProvider().get_quote(Symbol("AAPL"))

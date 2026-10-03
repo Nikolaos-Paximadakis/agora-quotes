@@ -1,6 +1,6 @@
 # agora-quotes
 
-One consistent interface for stock market quotes: Greek stocks (Athens Exchange, ATHEX) first, plus US and other markets. It is a thin wrapper over existing data sources (currently yfinance). Your apps depend on `agora_quotes` only, never on a vendor SDK, so a data source can be swapped by writing one adapter.
+One consistent interface for stock market quotes: Greek stocks (Athens Exchange, ATHEX) first, plus US and other markets. It is a thin wrapper over existing data sources (yfinance, Twelve Data). Your apps depend on `agora_quotes` only, never on a vendor SDK, so a data source can be swapped by writing one adapter.
 
 ## Install
 
@@ -8,6 +8,7 @@ From another uv project on this machine:
 
 ```bash
 uv add --editable ../agora-quotes
+uv add --editable '../agora-quotes[twelvedata]'   # also install the Twelve Data client
 ```
 
 For development in this repo:
@@ -34,7 +35,6 @@ for symbol, value in results.items():
         print(symbol, "failed:", value)   # e.g. SymbolNotFound, returned inline
     else:
         print(symbol, value.price)
-```
 
 bars = aq.get_history("AAPL", start="2026-01-01", interval="1d")
 bars[0].timestamp, bars[0].close  # bar start (UTC), unadjusted close
@@ -64,6 +64,7 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 - **Prices** are **unadjusted** for splits and dividends.
 - **Results.** A range with no trading returns `[]`; an unknown symbol raises `SymbolNotFound`.
 - **Intraday limits.** Yahoo serves intraday data only for recent periods: `1m` for 30 days, `5m`/`15m` for 60 days, `1h` for 730 days. Older requests raise `ProviderError`.
+- **Twelve Data** returns at most 5000 bars per request. A range that reaches that cap raises `ProviderError` rather than silently returning a truncated list; ask for a shorter range.
 
 ### Errors
 
@@ -78,7 +79,8 @@ These are environment variables only; see `.env.example`.
 | `AGORA_QUOTES_PROVIDER` | Default provider: `yahoo` (default), `twelvedata`, `eodhd` |
 | `AGORA_QUOTES_FALLBACK` | Optional second provider, tried when the first fails |
 | `AGORA_QUOTES_CACHE_TTL` | Quote cache lifetime in seconds (default 60, `0` disables) |
-| `TWELVEDATA_API_KEY`, `EODHD_API_KEY` | API keys for those providers (not implemented yet) |
+| `TWELVEDATA_API_KEY` | Twelve Data API key; required when `twelvedata` is configured (missing → `ConfigurationError`) |
+| `EODHD_API_KEY` | EODHD API key (provider not implemented yet) |
 
 Or configure it in code:
 
@@ -99,7 +101,7 @@ Arguments left as `None` are read from the environment. Providers can be given a
 
 Free data, especially for ATHEX, is usually **delayed by about 15 minutes**. Every `Quote` has:
 
-- `delayed`. This is `True` unless the source explicitly reports the data as real-time. With Yahoo, ATHEX quotes report a 15-minute delay; US quotes report 0 and are marked `delayed=False`.
+- `delayed`. This is `True` unless the source explicitly reports the data as real-time. With Yahoo, ATHEX quotes report a 15-minute delay; US quotes report 0 and are marked `delayed=False`. Twelve Data never says whether a quote is real-time, so its quotes are always `delayed=True`.
 - `timestamp`, the market time the price refers to. Outside trading hours this is the last close, so check it before treating a price as current.
 - `source` and `retrieved_at`.
 
