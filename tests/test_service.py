@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -213,8 +214,21 @@ def test_stream_uses_the_first_provider_that_can_stream() -> None:
     setup(primary, streamer)
     quotes = collect(["EXAE.AT", "AAPL"])
     assert [(q.symbol, q.source) for q in quotes] == [("ATHEX:EXAE", "s"), ("AAPL", "s")]
-    assert streamer.calls == [("stream", ["ATHEX:EXAE", "AAPL"])]
+    assert streamer.calls == [("stream", ["ATHEX:EXAE", "AAPL"]), ("stream closed", [])]
     assert primary.calls == []
+
+
+def test_closing_the_stream_early_closes_the_provider_stream() -> None:
+    streamer = FakeStreamer("s", {"AAPL": 2.0, "ATHEX:EXAE": 10.0})
+    setup(streamer)
+
+    async def main() -> None:
+        async with contextlib.aclosing(aq.stream(["AAPL", "EXAE.AT"])) as quotes:
+            async for _ in quotes:
+                break
+        assert streamer.calls[-1] == ("stream closed", [])
+
+    asyncio.run(main())
 
 
 def test_stream_without_a_streaming_provider_is_a_configuration_error() -> None:

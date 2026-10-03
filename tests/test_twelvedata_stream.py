@@ -225,6 +225,23 @@ def test_gives_up_after_repeated_reconnect_failures(
     run(main)
 
 
+def test_heartbeats_continue_while_the_consumer_is_busy(
+    provider: TwelveDataProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(twelvedata, "HEARTBEAT_S", 0.01)
+
+    async def main() -> None:
+        stream = provider.stream([AAPL])
+        first = asyncio.ensure_future(anext(stream))
+        app = await opened()
+        app.push(price("AAPL", "XNAS", 1.0))
+        await first  # the generator is now paused at yield, not pulling events
+        await until(lambda: {"action": "heartbeat"} in app.sent)
+        await stream.aclose()
+
+    run(main)
+
+
 def test_heartbeats_are_sent_while_idle(
     provider: TwelveDataProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

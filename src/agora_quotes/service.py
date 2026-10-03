@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from datetime import date, datetime, time, timezone
 from typing import get_args
 
@@ -120,7 +120,7 @@ def get_history(
     raise _pick_error(errors)
 
 
-async def stream(symbols: Sequence[str]) -> AsyncIterator[Quote]:
+async def stream(symbols: Sequence[str]) -> AsyncGenerator[Quote, None]:
     """Yield a quote for every price update on ``symbols`` until cancelled.
 
     Uses the first configured provider (primary, then fallback) that can
@@ -135,8 +135,13 @@ async def stream(symbols: Sequence[str]) -> AsyncIterator[Quote]:
     if provider is None:
         names = [p.name for p in registry.settings().providers]
         raise ConfigurationError(f"none of the configured providers {names} can stream")
-    async for quote in provider.stream(syms):
-        yield quote
+    quotes = provider.stream(syms)
+    try:
+        async for quote in quotes:
+            yield quote
+    finally:
+        # ``async for`` doesn't close it when this generator is closed early.
+        await quotes.aclose()
 
 
 def _pick_error(errors: list[AgoraQuotesError]) -> AgoraQuotesError:

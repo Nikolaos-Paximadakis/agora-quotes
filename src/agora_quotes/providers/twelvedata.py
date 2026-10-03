@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import queue
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -210,7 +210,7 @@ class TwelveDataProvider:
             )
         return bars
 
-    async def stream(self, symbols: Sequence[Symbol]) -> AsyncIterator[Quote]:
+    async def stream(self, symbols: Sequence[Symbol]) -> AsyncGenerator[Quote, None]:
         """Yield a quote for every price update on ``symbols`` until cancelled.
 
         Raises ``ProviderError`` if the connection is refused, cannot be
@@ -228,23 +228,23 @@ class TwelveDataProvider:
         by_key = {_ws_key(s): s for s in symbols}
         sock.subscribe(list(by_key))  # sent once the connection opens
         sock.connect()
-        try:
-            next_heartbeat = loop.time() + HEARTBEAT_S
+
+        async def heartbeat() -> None:
+            # Its own task, so heartbeats continue while the consumer is busy.
             while True:
-                timeout = next_heartbeat - loop.time()
-                if timeout <= 0:
-                    await asyncio.to_thread(sock.heartbeat)
-                    next_heartbeat = loop.time() + HEARTBEAT_S
-                    continue
-                try:
-                    item = await asyncio.wait_for(events.get(), timeout)
-                except asyncio.TimeoutError:
-                    continue
+                await asyncio.sleep(HEARTBEAT_S)
+                await asyncio.to_thread(sock.heartbeat)
+
+        heartbeats = asyncio.create_task(heartbeat())
+        try:
+            while True:
+                item = await events.get()
                 if isinstance(item, AgoraQuotesError):
                     raise item
                 for quote in self._stream_event(item, by_key):
                     yield quote
         finally:
+            heartbeats.cancel()
             await asyncio.to_thread(sock.close)
 
     def _stream_event(self, event: dict[str, Any], by_key: dict[str, Symbol]) -> list[Quote]:

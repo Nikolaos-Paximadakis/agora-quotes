@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -49,4 +49,4 @@ class StreamingProvider(Protocol):
 
     name: str
 
-    def stream(self, symbols: Sequence[Symbol]) -> AsyncIterator[Quote]: ...
+    def stream(self, symbols: Sequence[Symbol]) -> AsyncGenerator[Quote, None]: ...

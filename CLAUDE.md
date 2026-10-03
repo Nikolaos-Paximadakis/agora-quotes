@@ -45,7 +45,7 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
     - It subscribes with `{"symbol", "mic_code"}` objects.
     - It reports a failed first connection, or more than `MAX_RECONNECTS` failed reconnects, as `ProviderError` instead of retrying forever.
     - On close it ends the SDK's dispatch thread by raising `SystemExit` from `on_event`. That is the only way out of the SDK's loop; the tests filter pytest's warning about it.
-  - Events cross from the SDK threads via `loop.call_soon_threadsafe` into an `asyncio.Queue`. The generator sends a heartbeat every `HEARTBEAT_S` and closes the socket in `finally`. A rejected subscription raises; it is not skipped.
+  - Events cross from the SDK threads via `loop.call_soon_threadsafe` into an `asyncio.Queue`. A separate task sends a heartbeat every `HEARTBEAT_S`, even while the consumer is busy, and the generator closes the socket in `finally`. `service.stream` calls `aclose()` on the provider generator itself, because `async for` does not. A rejected subscription raises; it is not skipped.
 - **`providers/eodhd.py`** is a `NotImplementedError` stub.
 
 ## Invariants (tests depend on these)
