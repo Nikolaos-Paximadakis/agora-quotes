@@ -12,21 +12,22 @@ from datetime import datetime
 
 from agora_quotes.errors import AgoraQuotesError
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.symbols import Symbol
 
 
 class TwelveDataProvider:
     name = "twelvedata"
 
-    def get_quote(self, symbol: str) -> Quote:
+    def get_quote(self, symbol: Symbol) -> Quote:
         raise NotImplementedError("Twelve Data adapter is not implemented yet")
 
-    def get_quotes(self, symbols: Sequence[str]) -> dict[str, Quote | AgoraQuotesError]:
+    def get_quotes(self, symbols: Sequence[Symbol]) -> dict[Symbol, Quote | AgoraQuotesError]:
         raise NotImplementedError("Twelve Data adapter is not implemented yet")
 
     def get_history(
-        self, symbol: str, start: datetime, end: datetime | None, interval: Interval
+        self, symbol: Symbol, start: datetime, end: datetime, interval: Interval
     ) -> list[Bar]:
         raise NotImplementedError("Twelve Data adapter is not implemented yet")
 
-    def stream(self, symbols: Sequence[str]) -> AsyncIterator[Quote]:
+    def stream(self, symbols: Sequence[Symbol]) -> AsyncIterator[Quote]:
         raise NotImplementedError("Twelve Data streaming is not implemented yet")

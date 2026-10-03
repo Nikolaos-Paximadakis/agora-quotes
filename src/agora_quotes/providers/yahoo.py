@@ -1,14 +1,16 @@
 """Yahoo Finance adapter, built on yfinance.
 
-Symbols use Yahoo's format: Greek stocks take the ``.AT`` suffix (``EXAE.AT``),
-US stocks are plain (``AAPL``). Yahoo data is for personal use only; see the
-README for redistribution terms.
+Yahoo symbols are the ticker plus an exchange suffix from
+``symbols.YAHOO_SUFFIXES`` (``ATHEX:EXAE`` -> ``EXAE.AT``; US tickers have no
+suffix). Yahoo data is for personal use only; see the README for
+redistribution terms.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import yfinance as yf
@@ -16,20 +18,34 @@ from yfinance.exceptions import YFRateLimitError
 
 from agora_quotes.errors import AgoraQuotesError, ProviderError, RateLimited, SymbolNotFound
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.symbols import YAHOO_SUFFIXES, Symbol
+
+# Yahoo only serves intraday bars this far back; older requests come back
+# empty with no error, so they are rejected up front instead.
+INTRADAY_MAX_AGE: dict[str, timedelta] = {
+    "1m": timedelta(days=30),
+    "5m": timedelta(days=60),
+    "15m": timedelta(days=60),
+    "1h": timedelta(days=730),
+}
+
+
+def yahoo_symbol(symbol: Symbol) -> str:
+    return symbol.ticker + YAHOO_SUFFIXES.get(symbol.exchange or "", "")
 
 
 class YahooProvider:
     name = "yahoo"
 
-    def get_quote(self, symbol: str) -> Quote:
+    def get_quote(self, symbol: Symbol) -> Quote:
         info = self._info(symbol)
         price = info.get("regularMarketPrice")
         market_time = info.get("regularMarketTime")
         if price is None or market_time is None:
-            raise SymbolNotFound(symbol, self.name)
+            raise SymbolNotFound(str(symbol), self.name)
         delay = info.get("exchangeDataDelayedBy")
         return Quote(
-            symbol=symbol,
+            symbol=str(symbol),
             price=float(price),
             currency=info.get("currency"),
             timestamp=datetime.fromtimestamp(int(market_time), tz=timezone.utc),
@@ -39,8 +55,8 @@ class YahooProvider:
             retrieved_at=datetime.now(timezone.utc),
         )
 
-    def get_quotes(self, symbols: Sequence[str]) -> dict[str, Quote | AgoraQuotesError]:
-        results: dict[str, Quote | AgoraQuotesError] = {}
+    def get_quotes(self, symbols: Sequence[Symbol]) -> dict[Symbol, Quote | AgoraQuotesError]:
+        results: dict[Symbol, Quote | AgoraQuotesError] = {}
         for symbol in symbols:
             try:
                 results[symbol] = self.get_quote(symbol)
@@ -49,15 +65,58 @@ class YahooProvider:
         return results
 
     def get_history(
-        self, symbol: str, start: datetime, end: datetime | None, interval: Interval
+        self, symbol: Symbol, start: datetime, end: datetime, interval: Interval
     ) -> list[Bar]:
-        raise NotImplementedError("Yahoo history arrives in milestone 2")
-
-    def _info(self, symbol: str) -> dict[str, Any]:
+        max_age = INTRADAY_MAX_AGE.get(interval)
+        if max_age is not None and start < datetime.now(timezone.utc) - max_age:
+            raise ProviderError(
+                f"{interval} bars are only available for the last {max_age.days} days",
+                self.name,
+            )
         try:
-            info = yf.Ticker(symbol).info
+            df = yf.Ticker(yahoo_symbol(symbol)).history(
+                start=start, end=end, interval=interval, auto_adjust=False, actions=False
+            )
+        except YFRateLimitError as e:
+            raise RateLimited(self.name) from e
+        except Exception as e:  # yfinance raises many unrelated types
+            raise ProviderError(f"{type(e).__name__}: {e}", self.name) from e
+
+        if df.empty:
+            # yfinance returns an empty frame both for unknown symbols and for
+            # ranges with no trading; only the former is an error.
+            if self._info(symbol).get("regularMarketPrice") is None:
+                raise SymbolNotFound(str(symbol), self.name)
+            return []
+
+        bars = []
+        for ts, row in df.iterrows():
+            if any(_missing(row[c]) for c in ("Open", "High", "Low", "Close")):
+                continue
+            bars.append(
+                Bar(
+                    symbol=str(symbol),
+                    timestamp=ts.to_pydatetime(),
+                    interval=interval,
+                    open=float(row["Open"]),
+                    high=float(row["High"]),
+                    low=float(row["Low"]),
+                    close=float(row["Close"]),
+                    volume=None if _missing(row["Volume"]) else float(row["Volume"]),
+                    source=self.name,
+                )
+            )
+        return bars
+
+    def _info(self, symbol: Symbol) -> dict[str, Any]:
+        try:
+            info = yf.Ticker(yahoo_symbol(symbol)).info
         except YFRateLimitError as e:
             raise RateLimited(self.name) from e
         except Exception as e:  # yfinance raises many unrelated types
             raise ProviderError(f"{type(e).__name__}: {e}", self.name) from e
         return dict(info or {})
+
+
+def _missing(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and math.isnan(value))

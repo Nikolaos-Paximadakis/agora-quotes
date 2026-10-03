@@ -21,5 +21,11 @@ def test_live_us_quote() -> None:
 
 
 def test_live_unknown_symbol() -> None:
-    result = aq.get_quotes(["AAPL", "NOPE_ZZZ.AT"])
-    assert isinstance(result["NOPE_ZZZ.AT"], aq.SymbolNotFound)
+    result = aq.get_quotes(["AAPL", "NOPEZZZ.AT"])
+    assert isinstance(result["NOPEZZZ.AT"], aq.SymbolNotFound)
+
+
+def test_live_history_greek_daily() -> None:
+    bars = aq.get_history("ATHEX:EXAE", start="2026-09-01", end="2026-10-01")
+    assert len(bars) > 15
+    assert all(b.symbol == "ATHEX:EXAE" and b.timestamp.tzinfo is not None for b in bars)

@@ -28,7 +28,9 @@ def _no_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.fixture(autouse=True)
-def _reset_registry() -> None:
+def _clean_config(monkeypatch: pytest.MonkeyPatch) -> None:
     from agora_quotes import registry
 
-    registry.configure(None)
+    for var in ("AGORA_QUOTES_PROVIDER", "AGORA_QUOTES_FALLBACK", "AGORA_QUOTES_CACHE_TTL"):
+        monkeypatch.delenv(var, raising=False)
+    registry.reset()

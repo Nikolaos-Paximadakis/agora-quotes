@@ -11,6 +11,14 @@ class ConfigurationError(AgoraQuotesError):
     """Unknown provider name, missing API key, or invalid setting."""
 
 
+class InvalidSymbol(AgoraQuotesError, ValueError):
+    """The symbol string cannot be parsed (e.g. unknown exchange prefix)."""
+
+    def __init__(self, symbol: str, reason: str) -> None:
+        super().__init__(f"invalid symbol {symbol!r}: {reason}")
+        self.symbol = symbol
+
+
 class SymbolNotFound(AgoraQuotesError):
     """The provider has no data for this symbol."""
 

@@ -8,11 +8,15 @@ from typing import Protocol, runtime_checkable
 
 from agora_quotes.errors import AgoraQuotesError
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.symbols import Symbol
 
 
 @runtime_checkable
 class Provider(Protocol):
     """A synchronous source of quotes and history.
+
+    Symbols arrive already parsed; each provider converts them to its native
+    format and sets ``Quote.symbol``/``Bar.symbol`` to ``str(symbol)``.
 
     Implementations must raise only ``AgoraQuotesError`` subclasses, never
     vendor exceptions, and must set ``Quote.delayed`` to False only when the
@@ -21,15 +25,17 @@ class Provider(Protocol):
 
     name: str
 
-    def get_quote(self, symbol: str) -> Quote: ...
+    def get_quote(self, symbol: Symbol) -> Quote: ...
 
-    def get_quotes(self, symbols: Sequence[str]) -> dict[str, Quote | AgoraQuotesError]:
+    def get_quotes(self, symbols: Sequence[Symbol]) -> dict[Symbol, Quote | AgoraQuotesError]:
         """Per-symbol failures are returned as values; source-wide failures raise."""
         ...
 
     def get_history(
-        self, symbol: str, start: datetime, end: datetime | None, interval: Interval
-    ) -> list[Bar]: ...
+        self, symbol: Symbol, start: datetime, end: datetime, interval: Interval
+    ) -> list[Bar]:
+        """Bars with ``start <= timestamp < end`` (both UTC)."""
+        ...
 
 
 @runtime_checkable
@@ -43,4 +49,4 @@ class StreamingProvider(Protocol):
 
     name: str
 
-    def stream(self, symbols: Sequence[str]) -> AsyncIterator[Quote]: ...
+    def stream(self, symbols: Sequence[Symbol]) -> AsyncIterator[Quote]: ...

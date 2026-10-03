@@ -6,21 +6,48 @@ from agora_quotes.providers.base import Provider, StreamingProvider
 from agora_quotes.providers.eodhd import EODHDProvider
 from agora_quotes.providers.twelvedata import TwelveDataProvider
 from agora_quotes.providers.yahoo import YahooProvider
+from agora_quotes.symbols import Symbol
 
 
-def test_default_provider_is_yahoo(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AGORA_QUOTES_PROVIDER", raising=False)
-    assert isinstance(registry.get_provider(), YahooProvider)
+def names() -> list[str]:
+    return [p.name for p in registry.settings().providers]
 
 
-def test_provider_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_defaults() -> None:
+    assert names() == ["yahoo"]
+    assert registry.settings().cache.ttl == registry.DEFAULT_CACHE_TTL
+
+
+def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGORA_QUOTES_PROVIDER", "eodhd")
-    assert isinstance(registry.get_provider(), EODHDProvider)
+    monkeypatch.setenv("AGORA_QUOTES_FALLBACK", "yahoo")
+    monkeypatch.setenv("AGORA_QUOTES_CACHE_TTL", "5")
+    assert names() == ["eodhd", "yahoo"]
+    assert registry.settings().cache.ttl == 5
+
+
+def test_code_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_QUOTES_PROVIDER", "eodhd")
+    aq.configure(provider="yahoo", fallback="twelvedata", cache_ttl=0)
+    assert names() == ["yahoo", "twelvedata"]
+    assert registry.settings().cache.ttl == 0
+
+
+def test_configure_accepts_instances() -> None:
+    p = YahooProvider()
+    aq.configure(provider=p)
+    assert registry.settings().providers == [p]
 
 
 def test_unknown_provider_name() -> None:
     with pytest.raises(ConfigurationError, match="unknown provider"):
         aq.configure("bloomberg")
+
+
+def test_bad_cache_ttl_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGORA_QUOTES_CACHE_TTL", "soon")
+    with pytest.raises(ConfigurationError, match="CACHE_TTL"):
+        registry.settings()
 
 
 def test_all_adapters_satisfy_protocol() -> None:
@@ -31,6 +58,6 @@ def test_all_adapters_satisfy_protocol() -> None:
 
 def test_stubs_raise_not_implemented() -> None:
     with pytest.raises(NotImplementedError):
-        TwelveDataProvider().get_quote("AAPL")
+        TwelveDataProvider().get_quote(Symbol("AAPL"))
     with pytest.raises(NotImplementedError):
-        EODHDProvider().get_quote("AAPL")
+        EODHDProvider().get_quote(Symbol("AAPL"))
