@@ -67,7 +67,9 @@ def test_all_adapters_satisfy_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EODHD_API_KEY", "test-key")
     for cls in (YahooProvider, TwelveDataProvider, EODHDProvider):
         assert isinstance(cls(), Provider)
-    assert isinstance(TwelveDataProvider(), StreamingProvider)
+    for streamer in (YahooProvider, TwelveDataProvider):
+        assert isinstance(streamer(), StreamingProvider)
+    assert not isinstance(EODHDProvider(), StreamingProvider)
 
 
 def test_missing_optional_dependency_is_a_configuration_error(

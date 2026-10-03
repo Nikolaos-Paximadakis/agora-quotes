@@ -35,6 +35,7 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
   - `yahoo_symbol()` maps a Symbol to a Yahoo ticker.
   - Quotes come from `Ticker.info` (`regularMarketPrice`, `regularMarketTime`, `exchangeDataDelayedBy`).
   - History comes from `Ticker.history(auto_adjust=False)`.
+  - `stream()` uses yfinance's `AsyncWebSocket` only to connect, subscribe, send heartbeats and decode (`_ws`, `_decode_message`); it runs its own receive loop because `listen()` swallows errors, never really reconnects, and hot-spins after a clean close. The websocket ignores unknown tickers and has no delay field, so `stream()` first fetches `info` per symbol (unknown → `SymbolNotFound`; `delayed` from `exchangeDataDelayedBy`). It yields only `market_hours == 1` (regular session; proto3 omits 0 = pre-market). A drop reconnects and resubscribes on a new socket; `MAX_RECONNECTS` consecutive reconnects without a message → `ProviderError`. Tests subclass the real `AsyncWebSocket` over a fake connection (`tests/test_yahoo_stream.py`).
 - **yfinance quirks the Yahoo adapter handles.** yfinance never raises for bad symbols. `info` comes back nearly empty, and `history` returns an empty frame both for unknown symbols and for no-trading ranges. So the adapter checks `info` when `history` is empty, and rejects too-old intraday ranges up front using `INTRADAY_MAX_AGE`.
 - **`providers/twelvedata.py`** (optional extra `agora-quotes[twelvedata]`; also in the dev group):
   - Sends the ticker plus a MIC code from `MIC_CODES` (`ATHEX` → `XATH`); plain tickers mean US.

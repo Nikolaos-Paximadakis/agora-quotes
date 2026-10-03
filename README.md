@@ -69,13 +69,11 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 
 ### Streaming
 
-`aq.stream(symbols)` is an async generator that yields a `Quote` every time a price changes. It needs a provider that can stream, which is currently only Twelve Data (`agora-quotes[twelvedata]`).
+`aq.stream(symbols)` is an async generator that yields a `Quote` every time a price changes. It needs a provider that can stream: Yahoo (the default, no key needed) or Twelve Data (`agora-quotes[twelvedata]`).
 
 ```python
 import asyncio
 import agora_quotes as aq
-
-aq.configure(provider="twelvedata")
 
 async def watch() -> None:
     async for q in aq.stream(["AAPL", "ATHEX:EXAE"]):
@@ -86,10 +84,11 @@ task = asyncio.create_task(watch())
 task.cancel()   # disconnects the websocket
 ```
 
-- **Which provider.** The stream uses the first configured provider that can stream: the primary, then the fallback. So `provider="yahoo", fallback="twelvedata"` streams from Twelve Data. If the stream fails, it does not fall over to another provider.
+- **Which provider.** The stream uses the first configured provider that can stream: the primary, then the fallback. Yahoo and Twelve Data both can, so `provider="yahoo", fallback="twelvedata"` streams from Yahoo; use `provider="twelvedata"` to stream from Twelve Data. If the stream fails, it does not fall over to another provider.
 - **Stopping.** Cancel the consuming task to disconnect. If you `break` out of the loop instead, wrap the generator in `contextlib.aclosing(...)` so it closes right away rather than when it is garbage-collected.
-- **Errors.** A rejected API key, a symbol Twelve Data refuses, or a connection that can't be restored after 5 reconnect attempts raises `ProviderError` from the loop. Brief drops are reconnected and resubscribed automatically.
-- **Quotes.** Streamed quotes are always `delayed=True`, the same as Twelve Data's REST quotes. They are not cached. Your Twelve Data plan decides which markets you can stream; check that ATHEX is covered before relying on it.
+- **Errors.** A connection that can't be restored after 5 reconnect attempts raises `ProviderError` from the loop, as does a failed first connection. Brief drops are reconnected and resubscribed automatically. With Twelve Data, a rejected API key or a refused symbol also raises `ProviderError`. With Yahoo, an unknown symbol raises `SymbolNotFound` before connecting.
+- **Quotes.** Streamed quotes are not cached. Twelve Data's are always `delayed=True`, the same as its REST quotes. Your Twelve Data plan decides which markets you can stream; check that ATHEX is covered before relying on it.
+- **Yahoo.** Yahoo's websocket never says how delayed it is, so the stream first fetches each symbol's quote info (one request per symbol) and takes `delayed` from it, the same as `get_quote`: ATHEX is `delayed=True` (15 minutes), US is `delayed=False`. Only regular-session updates are yielded; pre- and post-market prices are skipped, matching `get_quote`. While a market is closed, nothing arrives.
 
 ### Errors
 

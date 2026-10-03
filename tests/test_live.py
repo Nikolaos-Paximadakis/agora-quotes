@@ -34,6 +34,18 @@ def test_live_history_greek_daily() -> None:
     assert all(b.symbol == "ATHEX:EXAE" and b.timestamp.tzinfo is not None for b in bars)
 
 
+def test_live_yahoo_stream() -> None:
+    async def first_quote() -> aq.Quote:
+        # Bitcoin trades around the clock, so this works outside market hours.
+        async for q in aq.stream(["BTC-USD"]):
+            return q
+        raise AssertionError("stream ended")
+
+    q = asyncio.run(asyncio.wait_for(first_quote(), timeout=60))
+    assert (q.symbol, q.source, q.currency, q.delayed) == ("BTC-USD", "yahoo", "USD", False)
+    assert q.price > 0
+
+
 @pytest.mark.skipif(not os.environ.get("TWELVEDATA_API_KEY"), reason="TWELVEDATA_API_KEY not set")
 def test_live_twelvedata_us_quote_and_history() -> None:
     aq.configure(provider="twelvedata", cache_ttl=0)
