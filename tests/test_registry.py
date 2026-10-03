@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 import agora_quotes as aq
 from agora_quotes import ConfigurationError, registry
+from agora_quotes.cache import SQLiteCache, TTLCache
 from agora_quotes.providers.base import Provider, StreamingProvider
 from agora_quotes.providers.eodhd import EODHDProvider
 from agora_quotes.providers.twelvedata import TwelveDataProvider
@@ -82,3 +85,18 @@ def test_missing_optional_dependency_is_a_configuration_error(
     monkeypatch.delitem(sys.modules, "agora_quotes.providers.twelvedata")
     with pytest.raises(ConfigurationError, match=r"agora-quotes\[twelvedata\]"):
         aq.configure(provider="twelvedata")
+
+
+def test_cache_path_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AGORA_QUOTES_CACHE_PATH", str(tmp_path / "q.db"))
+    cache = registry.settings().cache
+    assert isinstance(cache, SQLiteCache)
+    assert cache.path == tmp_path / "q.db"
+    assert cache.ttl == registry.DEFAULT_CACHE_TTL
+
+
+def test_cache_path_ignored_when_ttl_zero(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AGORA_QUOTES_CACHE_PATH", str(tmp_path / "q.db"))
+    aq.configure(cache_ttl=0)
+    assert isinstance(registry.settings().cache, TTLCache)
+    assert not (tmp_path / "q.db").exists()

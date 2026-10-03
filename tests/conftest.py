@@ -44,6 +44,11 @@ def _no_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch)
 def _clean_config(monkeypatch: pytest.MonkeyPatch) -> None:
     from agora_quotes import registry
 
-    for var in ("AGORA_QUOTES_PROVIDER", "AGORA_QUOTES_FALLBACK", "AGORA_QUOTES_CACHE_TTL"):
+    for var in (
+        "AGORA_QUOTES_PROVIDER",
+        "AGORA_QUOTES_FALLBACK",
+        "AGORA_QUOTES_CACHE_TTL",
+        "AGORA_QUOTES_CACHE_PATH",
+    ):
         monkeypatch.delenv(var, raising=False)
     registry.reset()

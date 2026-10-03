@@ -103,6 +103,7 @@ These are environment variables only; see `.env.example`.
 | `AGORA_QUOTES_PROVIDER` | Default provider: `yahoo` (default), `twelvedata`, `eodhd` |
 | `AGORA_QUOTES_FALLBACK` | Optional second provider, tried when the first fails |
 | `AGORA_QUOTES_CACHE_TTL` | Quote cache lifetime in seconds (default 60, `0` disables) |
+| `AGORA_QUOTES_CACHE_PATH` | SQLite file for a quote cache shared between apps (default: unset, in-memory per process) |
 | `TWELVEDATA_API_KEY` | Twelve Data API key; required when `twelvedata` is configured (missing → `ConfigurationError`) |
 | `EODHD_API_KEY` | EODHD API key; required when `eodhd` is configured (missing → `ConfigurationError`) |
 
@@ -112,14 +113,14 @@ Or configure it in code:
 aq.configure(provider="yahoo", fallback="eodhd", cache_ttl=30)
 ```
 
-Arguments left as `None` are read from the environment; `fallback=False` turns off a fallback that `AGORA_QUOTES_FALLBACK` sets. Providers can be given as names or instances, and reconfiguring empties the cache.
+Arguments left as `None` are read from the environment; `fallback=False` turns off a fallback that `AGORA_QUOTES_FALLBACK` sets. Providers can be given as names or instances, and reconfiguring empties an in-memory cache (a shared SQLite cache keeps its entries).
 
 **Fallback.** When the primary provider raises, the fallback is tried:
 
 - `get_quotes` retries only the symbols that failed.
 - `SymbolNotFound` is reported only when every provider says so; otherwise you get the first real failure, such as `RateLimited`.
 
-**Cache.** Only quotes are cached, keyed by canonical symbol, so `EXAE.AT` and `ATHEX:EXAE` share an entry. The cache lives **inside one process**: separate apps don't share it.
+**Cache.** Only quotes are cached, keyed by canonical symbol, so `EXAE.AT` and `ATHEX:EXAE` share an entry. By default the cache lives **inside one process**, so separate apps don't share it. Set `AGORA_QUOTES_CACHE_PATH` to the same file (e.g. `~/.cache/agora-quotes/quotes.db`) in each app to share one SQLite cache between them; it needs no server. Each app applies its own TTL to the quotes it writes. If the file can't be created, the first call raises `ConfigurationError`; later database errors are logged and count as a cache miss. Keep the file on a local disk, since SQLite locking is unreliable on network filesystems.
 
 ## Data delays
 

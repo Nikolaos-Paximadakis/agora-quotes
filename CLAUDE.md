@@ -29,7 +29,7 @@ Flow: `__init__.py` (re-exports) → `service.py` → `registry.settings()` → 
   - `get_history` coerces `start`/`end` to UTC datetimes.
   - `stream` uses the first provider in the chain that is a `StreamingProvider`. It does not fail over mid-stream and bypasses the cache.
 - **`registry.py`** builds `Settings(providers=[primary, fallback?], cache)` from `configure()` args or the environment, read lazily on first use. `reset()` forgets it, and tests call it via the autouse fixture in `conftest.py`. Adapters are listed as `"module:Class"` strings and imported **lazily**, so vendor SDKs stay optional. A missing SDK raises `ConfigurationError` naming the extra to install.
-- **`cache.py`** is `TTLCache`, keyed by `Symbol`. It is per process, not shared between apps.
+- **`cache.py`** has `TTLCache` (in memory, per process) and `SQLiteCache` (a file shared between apps, chosen when `AGORA_QUOTES_CACHE_PATH` is set and the TTL is > 0). Both are keyed by `Symbol` and share `get`/`set`/`clear`/`ttl`. `SQLiteCache` stores wall-clock expiry plus the quote as JSON, opens a connection per operation, raises `ConfigurationError` if the file can't be opened at construction, and afterwards logs database errors and treats them as misses.
 - **`providers/base.py`** defines the `Provider` Protocol (sync; it receives `Symbol`s, not strings) and `StreamingProvider` (`stream()` is an **async generator**; callback SDKs bridge in via `asyncio.Queue`).
 - **`providers/yahoo.py`**, the only real adapter:
   - `yahoo_symbol()` maps a Symbol to a Yahoo ticker.

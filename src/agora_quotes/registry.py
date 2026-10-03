@@ -6,6 +6,8 @@ environment:
 * ``AGORA_QUOTES_PROVIDER``: primary provider (default ``yahoo``)
 * ``AGORA_QUOTES_FALLBACK``: optional provider tried when the primary fails
 * ``AGORA_QUOTES_CACHE_TTL``: quote cache lifetime in seconds (default 60; 0 disables)
+* ``AGORA_QUOTES_CACHE_PATH``: SQLite file for a quote cache shared between
+  processes (default: unset, an in-memory cache per process)
 
 Adapters are imported lazily so that unused vendor SDKs need not be installed.
 """
@@ -17,7 +19,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from agora_quotes.cache import TTLCache
+from agora_quotes.cache import SQLiteCache, TTLCache
 from agora_quotes.errors import ConfigurationError
 from agora_quotes.models import Quote
 from agora_quotes.providers.base import Provider
@@ -35,7 +37,7 @@ DEFAULT_CACHE_TTL = 60.0
 @dataclass
 class Settings:
     providers: list[Provider]  # primary first, then fallback
-    cache: TTLCache[Symbol, Quote]
+    cache: TTLCache[Symbol, Quote] | SQLiteCache
 
 
 _settings: Settings | None = None
@@ -70,7 +72,8 @@ def configure(
 
     Providers may be given by name or as instances. Arguments left as None are
     read from the environment; ``fallback=False`` means no fallback, whatever
-    the environment says. Reconfiguring empties the cache.
+    the environment says. Reconfiguring empties an in-memory cache; a shared
+    SQLite cache keeps its entries.
     """
     global _settings
     # Only False is valid; untyped callers can still pass True.
@@ -88,7 +91,13 @@ def configure(
             cache_ttl = float(raw) if raw.strip() else DEFAULT_CACHE_TTL
         except ValueError:
             raise ConfigurationError(f"AGORA_QUOTES_CACHE_TTL is not a number: {raw!r}") from None
-    _settings = Settings(chain, TTLCache(cache_ttl))
+    cache_path = os.environ.get("AGORA_QUOTES_CACHE_PATH", "").strip()
+    cache: TTLCache[Symbol, Quote] | SQLiteCache
+    if cache_path and cache_ttl > 0:
+        cache = SQLiteCache(cache_path, cache_ttl)
+    else:
+        cache = TTLCache(cache_ttl)
+    _settings = Settings(chain, cache)
 
 
 def settings() -> Settings:
