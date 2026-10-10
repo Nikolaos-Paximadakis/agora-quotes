@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Sequence
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from agora_quotes.errors import AgoraQuotesError
 from agora_quotes.models import Bar, Interval, Quote
 from agora_quotes.symbols import Symbol
+
+
+def bar_dates(start: datetime, end: datetime, interval: Interval) -> tuple[date, date]:
+    """The inclusive trading-date range of a daily-or-longer history request.
+
+    From ``start``'s date to the date of the last instant before ``end`` (so an
+    ``end`` after midnight includes that day). For ``1wk``/``1mo`` the first
+    date moves back to the start of its week or month: a period bar is dated
+    by its first day, so the period containing ``start`` would otherwise be
+    dropped. Adapters send these dates upstream and keep only bars inside them.
+    """
+    first, last = start.date(), (end - timedelta(microseconds=1)).date()
+    if interval == "1wk":
+        first -= timedelta(days=first.weekday())
+    elif interval == "1mo":
+        first = first.replace(day=1)
+    return first, last
 
 
 @runtime_checkable
@@ -34,7 +51,12 @@ class Provider(Protocol):
     def get_history(
         self, symbol: Symbol, start: datetime, end: datetime, interval: Interval
     ) -> list[Bar]:
-        """Bars with ``start <= timestamp < end`` (both UTC)."""
+        """Bars in ``[start, end)`` (both UTC).
+
+        Intraday bars are compared by instant: ``start <= timestamp < end``.
+        Daily and longer bars are compared by trading date in exchange time,
+        within ``bar_dates(start, end, interval)``.
+        """
         ...
 
 

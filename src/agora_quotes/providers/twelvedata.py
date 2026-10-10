@@ -20,7 +20,7 @@ import logging
 import os
 import queue
 from collections.abc import AsyncGenerator, Callable, Sequence
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -38,6 +38,7 @@ from agora_quotes.errors import (
     SymbolNotFound,
 )
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.providers.base import bar_dates
 from agora_quotes.symbols import Symbol
 
 # Canonical exchange code -> ISO 10383 MIC code, as Twelve Data's mic_code.
@@ -142,16 +143,17 @@ class TwelveDataProvider:
     ) -> list[Bar]:
         # Twelve Data's end_date is inclusive. Daily and longer bars are dated
         # in exchange time and ignore the timezone parameter, so those ranges
-        # are sent as UTC dates: [start date, end date).
-        if interval in INTRADAY:
+        # are sent as the dates of bar_dates.
+        dates = None if interval in INTRADAY else bar_dates(start, end, interval)
+        if dates is None:
             range_params = {
                 "start_date": f"{start:%Y-%m-%d %H:%M:%S}",
                 "end_date": f"{end:%Y-%m-%d %H:%M:%S}",
             }
         else:
             range_params = {
-                "start_date": start.date().isoformat(),
-                "end_date": (end - timedelta(microseconds=1)).date().isoformat(),
+                "start_date": dates[0].isoformat(),
+                "end_date": dates[1].isoformat(),
             }
         try:
             data = self._get(
@@ -170,12 +172,17 @@ class TwelveDataProvider:
         except _NoData:
             return []
         try:
-            return self._bars(symbol, data, interval, end)
+            return self._bars(symbol, data, interval, dates, end)
         except (KeyError, ValueError, TypeError) as e:  # malformed response
             raise ProviderError(f"bad time_series response: {e!r}", self.name) from e
 
     def _bars(
-        self, symbol: Symbol, data: dict[str, Any], interval: Interval, end: datetime
+        self,
+        symbol: Symbol,
+        data: dict[str, Any],
+        interval: Interval,
+        dates: tuple[date, date] | None,
+        end: datetime,
     ) -> list[Bar]:
         intraday = interval in INTRADAY
         values: list[dict[str, Any]] = data.get("values") or []
@@ -193,7 +200,10 @@ class TwelveDataProvider:
                     continue
             else:
                 # Bar start: midnight of the trading date in exchange time.
-                ts = datetime.combine(date.fromisoformat(row["datetime"]), time(), exchange_tz)
+                day = date.fromisoformat(row["datetime"])
+                if dates and not dates[0] <= day <= dates[1]:
+                    continue
+                ts = datetime.combine(day, time(), exchange_tz)
             volume = row.get("volume")
             bars.append(
                 Bar(

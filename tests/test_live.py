@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -41,6 +42,13 @@ def test_live_history_is_not_split_adjusted() -> None:
     bars = aq.get_history("AAPL", start="2020-08-28", end="2020-08-29")
     assert len(bars) == 1
     assert bars[0].close == pytest.approx(499.23, abs=0.01)
+
+
+def test_live_greek_daily_bounds_are_athens_dates() -> None:
+    # The 27 August session starts at 2018-08-26T21:00Z (agora-quotes#11).
+    bars = aq.get_history("ATHEX:ETE", start="2018-08-27", end="2018-08-28")
+    assert [b.timestamp for b in bars] == [datetime(2018, 8, 26, 21, tzinfo=timezone.utc)]
+    assert bars[0].close == pytest.approx(0.2452, abs=0.0001)
 
 
 def test_live_greek_history_is_not_reverse_split_adjusted() -> None:

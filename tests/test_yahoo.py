@@ -171,9 +171,72 @@ def test_history_converts_rows_to_utc_bars(tickers: dict[str, MagicMock]) -> Non
     assert bars[0].close == 11.3 and bars[0].volume == 99909
     assert bars[1].volume is None
     assert all(b.source == "yahoo" and b.interval == "1d" for b in bars)
+    # Daily ranges go to yfinance as dates, which it reads in exchange time.
     tickers["EXAE.AT"].history.assert_called_once_with(
-        start=START, end=END, interval="1d", auto_adjust=False, actions=False
+        start="2026-09-28", end="2026-10-03", interval="1d", auto_adjust=False, actions=False
     )
+
+
+@pytest.mark.parametrize(
+    ("bar_start", "utc"),
+    [
+        pytest.param("2018-08-27 00:00:00+03:00", "2018-08-26 21:00", id="summer-21Z"),
+        pytest.param("2018-01-15 00:00:00+02:00", "2018-01-14 22:00", id="winter-22Z"),
+    ],
+)
+def test_daily_bounds_are_trading_dates_in_exchange_time(
+    tickers: dict[str, MagicMock], bar_start: str, utc: str
+) -> None:
+    # An Athens daily bar starts the evening before in UTC, before a UTC-midnight
+    # ``start``; it is still the session of the requested date (agora-quotes#11).
+    day = pd.Timestamp(bar_start)
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [
+            (str(day - pd.Timedelta(days=1)), 1.0, 1),  # outside the dates: dropped
+            (bar_start, 2.0, 1),
+            (str(day + pd.Timedelta(days=1)), 3.0, 1),  # outside the dates: dropped
+        ]
+    )
+    start = datetime.combine(day.date(), datetime.min.time(), UTC)
+
+    bars = YahooProvider().get_history(EXAE, start, start + timedelta(days=1), "1d")
+
+    assert [b.close for b in bars] == [2.0]
+    assert bars[0].timestamp == datetime.fromisoformat(utc).replace(tzinfo=UTC)
+    tickers["EXAE.AT"].history.assert_called_once_with(
+        start=day.date().isoformat(),
+        end=(day.date() + timedelta(days=1)).isoformat(),
+        interval="1d",
+        auto_adjust=False,
+        actions=False,
+    )
+
+
+def test_daily_end_mid_day_includes_that_days_session(tickers: dict[str, MagicMock]) -> None:
+    # end defaults to now: today's bar (started at local midnight) is included.
+    yahoo.yf.Ticker("EXAE.AT").history.return_value = history_frame(
+        [("2026-10-02 00:00:00+03:00", 10.0, 1)]
+    )
+    end = datetime(2026, 10, 2, 14, 0, tzinfo=UTC)
+
+    bars = YahooProvider().get_history(EXAE, START, end, "1d")
+
+    assert [b.close for b in bars] == [10.0]
+    assert tickers["EXAE.AT"].history.call_args.kwargs["end"] == "2026-10-03"
+
+
+def test_monthly_bar_of_the_month_containing_start_is_kept(
+    tickers: dict[str, MagicMock],
+) -> None:
+    yahoo.yf.Ticker("AAPL").history.return_value = history_frame(
+        [("2026-01-01 00:00:00-05:00", 1.0, 1), ("2026-02-01 00:00:00-05:00", 2.0, 1)]
+    )
+    start, end = datetime(2026, 1, 15, tzinfo=UTC), datetime(2026, 3, 1, tzinfo=UTC)
+
+    bars = YahooProvider().get_history(AAPL, start, end, "1mo")
+
+    assert [b.close for b in bars] == [1.0, 2.0]
+    assert tickers["AAPL"].history.call_args.kwargs["start"] == "2026-01-01"
 
 
 def test_history_strips_float32_noise(tickers: dict[str, MagicMock]) -> None:

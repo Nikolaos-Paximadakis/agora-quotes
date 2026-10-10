@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fakes import FakeProvider, FakeStreamer
@@ -164,15 +165,52 @@ def test_history_date_coercion() -> None:
         end="2026-02-01T00:00:00+00:00",
     )
     assert p.calls[0][1][1:] == ["2026-01-01T00:00:00+00:00", "2026-02-01T00:00:00+00:00"]
-    assert p.calls[1][1][1] == "2026-01-01T10:00:00+00:00"
+    # Daily bounds are whole days: the datetime's date, in its own timezone.
+    assert p.calls[1][1][1] == "2026-01-01T00:00:00+00:00"
+
+
+def test_daily_bounds_take_a_datetimes_date_in_its_own_timezone() -> None:
+    # Athens midnight of 6 January is 22:00Z on the 5th; the caller means the 6th.
+    p = FakeProvider("p", {"AAPL": 1.0})
+    setup(p)
+    athens = ZoneInfo("Europe/Athens")
+    aq.get_history(
+        "AAPL",
+        start=datetime(2026, 1, 6, tzinfo=athens),
+        end=datetime(2026, 1, 7, tzinfo=athens),
+    )
+    aq.get_history(
+        "AAPL",
+        start=datetime(2026, 1, 6, 10, tzinfo=athens),
+        end=datetime(2026, 1, 6, 15, tzinfo=athens),
+    )
+    whole_day = ["2026-01-06T00:00:00+00:00", "2026-01-07T00:00:00+00:00"]
+    assert p.calls[0][1][1:] == whole_day
+    assert p.calls[1][1][1:] == whole_day
+
+
+def test_intraday_bounds_stay_instants() -> None:
+    p = FakeProvider("p", {"AAPL": 1.0})
+    setup(p)
+    aq.get_history(
+        "AAPL",
+        start=datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=2))),
+        end="2026-01-01T14:00:00+00:00",
+        interval="1h",
+    )
+    assert p.calls[0][1][1:] == ["2026-01-01T10:00:00+00:00", "2026-01-01T14:00:00+00:00"]
 
 
 def test_history_end_defaults_to_now() -> None:
     p = FakeProvider("p", {"AAPL": 1.0})
     setup(p)
-    aq.get_history("AAPL", start="2026-01-01")
+    aq.get_history("AAPL", start="2026-01-01", interval="1h")
     end = datetime.fromisoformat(p.calls[0][1][2])
     assert abs(end - datetime.now(UTC)) < timedelta(seconds=5)
+    # Daily: through today's (UTC) date.
+    aq.get_history("AAPL", start="2026-01-01")
+    tomorrow = datetime.now(UTC).date() + timedelta(days=1)
+    assert p.calls[1][1][2] == f"{tomorrow.isoformat()}T00:00:00+00:00"
 
 
 @pytest.mark.parametrize(

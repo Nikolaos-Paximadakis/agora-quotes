@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Sequence
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import get_args
 
 from agora_quotes import registry
@@ -14,7 +14,7 @@ from agora_quotes.errors import (
     ProviderError,
     SymbolNotFound,
 )
-from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.models import DAILY_INTERVALS, Bar, Interval, Quote
 from agora_quotes.providers.base import StreamingProvider
 from agora_quotes.symbols import Symbol, parse
 
@@ -99,18 +99,28 @@ def get_history(
     end: str | date | datetime | None = None,
     interval: Interval = "1d",
 ) -> list[Bar]:
-    """Return OHLCV bars with ``start <= timestamp < end`` (``end`` defaults to now).
+    """Return OHLCV bars from ``start`` up to ``end`` (``end`` defaults to now).
 
-    Dates and ISO strings mean midnight UTC; datetimes must be timezone-aware.
-    History is not cached.
+    Intraday bars satisfy ``start <= timestamp < end``. Daily and longer bars
+    are picked by their trading date in exchange time, from ``start``'s date up
+    to but excluding ``end``'s date, so ``start="2026-01-05", end="2026-01-06"``
+    is the 5 January session on any exchange; an ``end`` after midnight
+    includes that day, and a week or month counts if it overlaps the range.
+    A datetime's date is taken in its own timezone. Intraday, dates and ISO
+    strings mean midnight UTC. Datetimes must be timezone-aware. History is
+    not cached.
     """
     if interval not in get_args(Interval):
         raise ValueError(f"interval must be one of {get_args(Interval)}, got {interval!r}")
     sym = parse(symbol)
-    start_dt = _to_utc(start, "start")
-    end_dt = datetime.now(timezone.utc) if end is None else _to_utc(end, "end")
+    start_dt = _to_aware(start, "start")
+    end_dt = datetime.now(timezone.utc) if end is None else _to_aware(end, "end")
     if start_dt >= end_dt:
         raise ValueError(f"start ({start_dt}) must be before end ({end_dt})")
+    if interval in DAILY_INTERVALS:
+        start_dt, end_dt = _whole_days(start_dt, end_dt)
+    else:
+        start_dt, end_dt = start_dt.astimezone(timezone.utc), end_dt.astimezone(timezone.utc)
     errors: list[AgoraQuotesError] = []
     for provider in registry.settings().providers:
         try:
@@ -152,7 +162,22 @@ def _pick_error(errors: list[AgoraQuotesError]) -> AgoraQuotesError:
     return errors[0] if errors else ProviderError("provider returned no result", "agora_quotes")
 
 
-def _to_utc(value: str | date | datetime, field: str) -> datetime:
+def _whole_days(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    """UTC midnights spanning the caller's dates: ``start``'s date up to the
+    date of the last instant before ``end``, each taken in its own timezone.
+
+    Adapters read daily bounds back as UTC dates (``providers.base.bar_dates``),
+    so ``datetime(2026, 1, 6, tzinfo=Athens)`` means 6 January, not the 5th.
+    """
+    first, last = start.date(), (end - timedelta(microseconds=1)).date()
+    return (
+        datetime.combine(first, time(), tzinfo=timezone.utc),
+        datetime.combine(last + timedelta(days=1), time(), tzinfo=timezone.utc),
+    )
+
+
+def _to_aware(value: str | date | datetime, field: str) -> datetime:
+    """A timezone-aware datetime, kept in its own timezone; a date is midnight UTC."""
     if isinstance(value, str):
         try:
             value = datetime.fromisoformat(value) if "T" in value else date.fromisoformat(value)
@@ -161,5 +186,5 @@ def _to_utc(value: str | date | datetime, field: str) -> datetime:
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError(f"{field} must be timezone-aware, got naive {value!r}")
-        return value.astimezone(timezone.utc)
+        return value
     return datetime.combine(value, time(), tzinfo=timezone.utc)
