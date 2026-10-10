@@ -1,6 +1,6 @@
 import io
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from email.message import Message
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -301,6 +301,73 @@ def test_daily_history(provider: EODHDProvider, api: FakeApi) -> None:
     assert path == "eod/EXAE.AT"
     # ``to`` is inclusive upstream; the requested end is exclusive.
     assert (query["from"], query["to"], query["period"]) == ("2026-09-01", "2026-09-02", "d")
+
+
+def test_daily_history_drops_rows_outside_the_dates(provider: EODHDProvider, api: FakeApi) -> None:
+    api.responses["eod/EXAE.AT"] = EOD_ROWS
+    bars = provider.get_history(
+        EXAE, datetime(2026, 9, 2, tzinfo=UTC), datetime(2026, 9, 3, tzinfo=UTC), "1d"
+    )
+    assert [b.close for b in bars] == [10.1]
+
+
+def test_weekly_row_of_the_week_containing_start_is_kept(
+    provider: EODHDProvider, api: FakeApi
+) -> None:
+    # 2026-09-01 is a Tuesday; EODHD dates the week by its first trading day.
+    api.responses["eod/EXAE.AT"] = EOD_ROWS[:1]
+    bars = provider.get_history(
+        EXAE, datetime(2026, 9, 2, tzinfo=UTC), datetime(2026, 9, 4, tzinfo=UTC), "1wk"
+    )
+    assert [b.close for b in bars] == [9.9]
+    assert api.calls[0][1]["from"] == "2026-08-31"
+
+
+def test_history_older_than_the_plan_allows_raises(provider: EODHDProvider, api: FakeApi) -> None:
+    # Measured on the free plan: a 2018 range returns the oldest bar it allows.
+    api.responses["eod/EXAE.AT"] = EOD_ROWS
+    with pytest.raises(ProviderError, match="limits how far back"):
+        provider.get_history(
+            EXAE, datetime(2018, 8, 27, tzinfo=UTC), datetime(2018, 8, 28, tzinfo=UTC), "1d"
+        )
+
+
+def eod_row(day: date, close: float = 1.0) -> dict[str, Any]:
+    return {
+        "date": day.isoformat(),
+        "open": close,
+        "high": close,
+        "low": close,
+        "close": close,
+        "adjusted_close": close,
+        "volume": 1,
+    }
+
+
+def test_range_straddling_the_free_plans_year_raises(provider: EODHDProvider, api: FakeApi) -> None:
+    # Measured on the free plan: rows start a year back, wherever the range starts.
+    today = datetime.now(UTC).date()
+    api.responses["eod/EXAE.AT"] = [eod_row(today - timedelta(days=d)) for d in (366, 365, 30)]
+    with pytest.raises(ProviderError, match="limits how far back"):
+        provider.get_history(
+            EXAE,
+            datetime.combine(today - timedelta(days=700), time(), UTC),
+            datetime.combine(today, time(), UTC),
+            "1d",
+        )
+
+
+def test_history_that_really_starts_late_is_returned(provider: EODHDProvider, api: FakeApi) -> None:
+    # A listing that began mid-range, well away from the plan's one-year edge.
+    today = datetime.now(UTC).date()
+    api.responses["eod/EXAE.AT"] = [eod_row(today - timedelta(days=d)) for d in (100, 99)]
+    bars = provider.get_history(
+        EXAE,
+        datetime.combine(today - timedelta(days=700), time(), UTC),
+        datetime.combine(today, time(), UTC),
+        "1d",
+    )
+    assert len(bars) == 2
 
 
 @pytest.mark.parametrize(("interval", "period"), [("1wk", "w"), ("1mo", "m")])

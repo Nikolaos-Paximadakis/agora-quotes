@@ -210,6 +210,27 @@ def test_daily_history_bars_start_at_exchange_midnight(
     assert params["mic_code"] == "XATH"
 
 
+def test_daily_history_drops_rows_outside_the_dates(
+    provider: TwelveDataProvider, api: FakeApi
+) -> None:
+    api.responses["EXAE"] = series(
+        "Europe/Athens",
+        [("2026-09-25", "1", "1"), ("2026-09-28", "2", "1"), ("2026-10-03", "3", "1")],
+    )
+    bars = provider.get_history(EXAE, START, END, "1d")
+    assert [b.close for b in bars] == [2.0]
+
+
+def test_weekly_bar_of_the_week_containing_start_is_kept(
+    provider: TwelveDataProvider, api: FakeApi
+) -> None:
+    api.responses["EXAE"] = series("Europe/Athens", [("2026-09-28", "2", "1")])
+    start = datetime(2026, 9, 30, tzinfo=UTC)  # a Wednesday
+    bars = provider.get_history(EXAE, start, datetime(2026, 10, 10, tzinfo=UTC), "1wk")
+    assert [b.close for b in bars] == [2.0]
+    assert api.calls[0][1]["start_date"] == "2026-09-28"
+
+
 def test_intraday_history_is_utc_and_excludes_end(
     provider: TwelveDataProvider, api: FakeApi
 ) -> None:

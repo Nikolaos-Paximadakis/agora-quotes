@@ -58,15 +58,16 @@ The known exchanges are ATHEX, NASDAQ, NYSE, LSE and XETRA (`symbols.YAHOO_SUFFI
 
 ### History
 
-`get_history(symbol, start, end=None, interval="1d")` returns a `list[Bar]` with `start <= timestamp < end`. `end` defaults to now.
+`get_history(symbol, start, end=None, interval="1d")` returns a `list[Bar]` from `start` up to, but not including, `end`. `end` defaults to now.
 
-- **Arguments.** `start` and `end` take an ISO string, a `date` (both mean midnight UTC) or a timezone-aware `datetime`. Intervals: `1m`, `5m`, `15m`, `1h`, `1d`, `1wk`, `1mo`.
+- **Arguments.** `start` and `end` take an ISO string, a `date` or a timezone-aware `datetime`. For intraday bars a date means midnight UTC. Intervals: `1m`, `5m`, `15m`, `1h`, `1d`, `1wk`, `1mo`.
+- **Bounds.** Intraday bars satisfy `start <= timestamp < end`. Daily, weekly and monthly bars are picked by their **trading date on the exchange**: dates from `start`'s date up to, but not including, `end`'s date. A datetime's date is taken in its own timezone, so `datetime(2026, 1, 6, tzinfo=ZoneInfo("Europe/Athens"))` means 6 January; an `end` after midnight includes that day. So `start="2018-08-27", end="2018-08-28"` is the 27 August session on any exchange, even though an Athens bar starts at Athens midnight, which is `2018-08-26T21:00Z`. A weekly or monthly bar counts when its week or month overlaps the range, so `start="2026-01-15", interval="1mo"` starts with the January bar.
 - **Prices** are **unadjusted** for splits and dividends: each bar is the price that actually traded that day, so it can be multiplied by the quantity held that day. Yahoo serves split-adjusted closes even with dividend adjustment off, so the Yahoo adapter reads the symbol's split history (one extra request) and undoes every split dated after each bar; if that history can't be read, the call raises `ProviderError` rather than return adjusted prices. Volume is un-adjusted the same way. Because Yahoo stores prices as float32, a bar from before a large reverse split carries only the digits Yahoo kept.
 - **Suspensions.** Yahoo can fill a trading suspension with flat zero-volume bars repeating a stale price, and occasionally serves an outlier; check `volume` before trusting a single bar.
 - **Results.** A range with no trading returns `[]`; an unknown symbol raises `SymbolNotFound`.
 - **Intraday limits.** Yahoo serves intraday data only for recent periods: `1m` for 30 days, `5m`/`15m` for 60 days, `1h` for 730 days. Older requests raise `ProviderError`.
 - **Twelve Data** returns at most 5000 bars per request. A range that reaches that cap raises `ProviderError` rather than silently returning a truncated list; ask for a shorter range.
-- **EODHD** serves at most 120 days of `1m` bars and 600 days of `5m`/`15m` bars per request (7200 days of `1h`). Longer ranges raise `ProviderError` before any request is made. Weekly and monthly bars start on the first trading day of the week or month. EODHD's free plan has no intraday data, so intraday requests on it raise `ProviderError`.
+- **EODHD** serves at most 120 days of `1m` bars and 600 days of `5m`/`15m` bars per request (7200 days of `1h`). Longer ranges raise `ProviderError` before any request is made. The free plan serves one year of daily history; a range reaching further back raises `ProviderError` instead of returning only its recent part (or `[]`), so a fallback provider can answer it. Weekly and monthly bars start on the first trading day of the week or month. EODHD's free plan has no intraday data, so intraday requests on it raise `ProviderError`.
 
 ### Streaming
 

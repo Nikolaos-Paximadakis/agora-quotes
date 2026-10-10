@@ -31,6 +31,7 @@ from agora_quotes.errors import (
     SymbolNotFound,
 )
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.providers.base import bar_dates
 from agora_quotes.symbols import Symbol
 
 BASE_URL = "https://eodhd.com/api"
@@ -52,6 +53,10 @@ TIMEZONES: dict[str, str] = {
 # LSE is left out: its listings are quoted in GBX, GBP or USD.
 CURRENCIES: dict[str, str] = {"AT": "EUR", "US": "USD", "XETRA": "EUR"}
 PERIODS: dict[str, str] = {"1d": "d", "1wk": "w", "1mo": "m"}
+# The free plan serves daily bars back to about a year ago (366 days, measured
+# 2026-10-10); data that starts within a week of that edge counts as cut off.
+FREE_PLAN_DEPTH = timedelta(days=366)
+PLAN_EDGE_SLACK = timedelta(days=7)
 # Longest range EODHD serves in one intraday request.
 INTRADAY_MAX_SPAN: dict[str, timedelta] = {
     "1m": timedelta(days=120),
@@ -173,21 +178,48 @@ class EODHDProvider:
                 "to": str(int(end.timestamp())),
             }
         else:
-            # ``to`` is an inclusive date, so the range is [start date, end date).
+            # ``to`` is an inclusive date, like the last of bar_dates.
+            first, last = bar_dates(start, end, interval)
             path = f"eod/{path_symbol}"
             params = {
                 "period": PERIODS[interval],
-                "from": start.date().isoformat(),
-                "to": (end - timedelta(microseconds=1)).date().isoformat(),
+                "from": first.isoformat(),
+                "to": last.isoformat(),
                 "order": "a",
             }
         body = self._get(path, params, symbol)
         if not isinstance(body, list):
             raise ProviderError(f"unexpected {path.split('/')[0]} response: {body!r}", self.name)
         try:
+            if not intraday:
+                body = self._in_range(body, first, last)
             return self._bars(symbol, body, interval, end)
         except (KeyError, ValueError, TypeError) as e:  # malformed response
             raise ProviderError(f"bad history response: {e!r}", self.name) from e
+
+    def _in_range(
+        self, rows: list[dict[str, Any]], first: date, last: date
+    ) -> list[dict[str, Any]]:
+        """The ``/eod`` rows dated ``first``..``last``.
+
+        A plan limits how far back history goes (a year on the free plan), and
+        EODHD answers an older range with the oldest bars it allows instead of
+        an error: all after the range, or for a range that straddles the limit,
+        only its newer part. Either would read as "no trading" for the missing
+        days, so both raise and let a fallback provider answer.
+        """
+        dates = [date.fromisoformat(row["date"]) for row in rows]
+        if dates:
+            edge = datetime.now(timezone.utc).date() - FREE_PLAN_DEPTH
+            oldest = min(dates)
+            at_edge = first < edge - PLAN_EDGE_SLACK and abs(oldest - edge) <= PLAN_EDGE_SLACK
+            if at_edge or all(d > last for d in dates):
+                raise ProviderError(
+                    f"asked for bars from {first}, got them only from {oldest}; "
+                    "the plan probably limits how far back history goes",
+                    self.name,
+                )
+        return [row for row, d in zip(rows, dates, strict=True) if first <= d <= last]
 
     def _bars(
         self, symbol: Symbol, rows: list[dict[str, Any]], interval: Interval, end: datetime

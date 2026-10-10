@@ -24,6 +24,7 @@ from yfinance.exceptions import YFRateLimitError
 
 from agora_quotes.errors import AgoraQuotesError, ProviderError, RateLimited, SymbolNotFound
 from agora_quotes.models import Bar, Interval, Quote
+from agora_quotes.providers.base import bar_dates
 from agora_quotes.symbols import YAHOO_SUFFIXES, Symbol
 
 # Yahoo only serves intraday bars this far back; older requests come back
@@ -113,12 +114,19 @@ class YahooProvider:
                 f"{interval} bars are only available for the last {max_age.days} days",
                 self.name,
             )
+        if max_age is None:
+            # yfinance reads date bounds in exchange time, as bar_dates means them.
+            first, last = bar_dates(start, end, interval)
+            fetch: dict[str, Any] = {
+                "start": first.isoformat(),
+                "end": (last + timedelta(days=1)).isoformat(),
+            }
+        else:
+            fetch = {"start": start, "end": end}
         ticker = yf.Ticker(yahoo_symbol(symbol))
         try:
             with _quiet_yfinance():
-                df = ticker.history(
-                    start=start, end=end, interval=interval, auto_adjust=False, actions=False
-                )
+                df = ticker.history(**fetch, interval=interval, auto_adjust=False, actions=False)
         except YFRateLimitError as e:
             raise RateLimited(self.name) from e
         except Exception as e:  # yfinance raises many unrelated types
@@ -135,6 +143,8 @@ class YahooProvider:
         bars = []
         for ts, row in df.iterrows():
             if any(_missing(row[c]) for c in ("Open", "High", "Low", "Close")):
+                continue
+            if max_age is None and not first <= ts.date() <= last:
                 continue
             factor = _split_factor(ts, splits)
             bars.append(

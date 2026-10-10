@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Literal
 
 Interval = Literal["1m", "5m", "15m", "1h", "1d", "1wk", "1mo"]
+# Bars of these intervals are bounded by trading date, not by instant.
+DAILY_INTERVALS: frozenset[str] = frozenset({"1d", "1wk", "1mo"})
 
 
 def _as_utc(value: datetime, field: str) -> datetime:
